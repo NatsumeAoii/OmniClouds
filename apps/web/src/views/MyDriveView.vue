@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
 import { storeToRefs } from 'pinia';
 import {
 	IconChevronRight,
@@ -42,6 +42,7 @@ const fileInputRef = ref(null);
 const folderInputRef = ref(null);
 const actionError = ref('');
 const contextMenu = ref({ visible: false, x: 0, y: 0, file: null });
+const contextMenuRef = ref(null);
 const detailsFile = ref(null);
 const isDetailsOpen = ref(false);
 const isActionRunning = ref(false);
@@ -53,6 +54,8 @@ const activeFilterMenu = ref(null);
 const selectedTypeFilter = ref('all');
 const selectedOwnerFilter = ref('all');
 const selectedUpdatedFilter = ref('all');
+const selectedFileIds = ref(new Set());
+const lastSelectedFileId = ref(null);
 const lastObservedSyncAt = ref('');
 let healthPollTimer = null;
 
@@ -62,6 +65,18 @@ const sortDirection = ref('desc');
 const folders = computed(() => filteredFiles.value.filter((file) => file.is_folder));
 
 const suggestedFolders = computed(() => folders.value.slice(0, 4));
+
+const selectedFiles = computed(() => sortedFiles.value.filter((file) => selectedFileIds.value.has(file.id)));
+
+const selectedCount = computed(() => selectedFiles.value.length);
+
+const primarySelectedFile = computed(() => selectedFiles.value[0] || null);
+
+const canPreviewSelection = computed(() => selectedCount.value === 1 && canPreviewFile(primarySelectedFile.value));
+
+const canRenameSelection = computed(() => selectedCount.value === 1);
+
+const canDownloadSelection = computed(() => selectedFiles.value.some((file) => !file.is_folder));
 
 const ownerOptions = computed(() => {
 	const owners = [...new Set(filteredFiles.value.map((file) => file.email).filter(Boolean))];
@@ -312,30 +327,119 @@ function renderOwnerLabel(value) {
 
 function openFolder(file) {
 	if (!file.is_folder) return;
+	clearSelection();
 	const nextPath = `${currentPath.value === '/' ? '' : currentPath.value}${file.file_name}/`;
 	fileTreeStore.navigate(nextPath.startsWith('/') ? nextPath : `/${nextPath}`);
+}
+
+function replaceSelection(file) {
+	selectedFileIds.value = new Set([file.id]);
+	lastSelectedFileId.value = file.id;
+}
+
+function toggleSelection(file) {
+	const nextSelection = new Set(selectedFileIds.value);
+	if (nextSelection.has(file.id)) {
+		nextSelection.delete(file.id);
+	} else {
+		nextSelection.add(file.id);
+	}
+	selectedFileIds.value = nextSelection;
+	lastSelectedFileId.value = file.id;
+}
+
+function selectRange(file) {
+	const files = sortedFiles.value;
+	const currentIndex = files.findIndex((item) => item.id === file.id);
+	const anchorIndex = files.findIndex((item) => item.id === lastSelectedFileId.value);
+
+	if (currentIndex === -1 || anchorIndex === -1) {
+		replaceSelection(file);
+		return;
+	}
+
+	const [start, end] = currentIndex < anchorIndex ? [currentIndex, anchorIndex] : [anchorIndex, currentIndex];
+	selectedFileIds.value = new Set(files.slice(start, end + 1).map((item) => item.id));
+}
+
+function selectItem(event, file) {
+	event.preventDefault();
+	event.stopPropagation();
+	closeContextMenu();
+
+	if (event.shiftKey) {
+		selectRange(file);
+		return;
+	}
+
+	if (event.ctrlKey || event.metaKey) {
+		toggleSelection(file);
+		return;
+	}
+
+	replaceSelection(file);
+}
+
+function isSelected(file) {
+	return selectedFileIds.value.has(file.id);
+}
+
+function clearSelection() {
+	selectedFileIds.value = new Set();
+	lastSelectedFileId.value = null;
+}
+
+function openItemOnDoubleClick(file) {
+	if (file.is_folder) {
+		openFolder(file);
+		return;
+	}
+
+	if (canPreviewFile(file)) {
+		openPreview(file);
+	}
 }
 
 function closeContextMenu() {
 	contextMenu.value = { visible: false, x: 0, y: 0, file: null };
 }
 
-function openContextMenu(event, file) {
+async function openContextMenu(event, file) {
 	event.preventDefault();
 	event.stopPropagation();
+	if (!selectedFileIds.value.has(file.id)) {
+		replaceSelection(file);
+	}
 	contextMenu.value = {
 		visible: true,
 		x: event.clientX,
 		y: event.clientY,
 		file,
 	};
+
+	await nextTick();
+
+	const menu = contextMenuRef.value;
+	if (!menu) return;
+
+	const padding = 12;
+	const rect = menu.getBoundingClientRect();
+	contextMenu.value = {
+		...contextMenu.value,
+		x: Math.max(padding, Math.min(event.clientX, window.innerWidth - rect.width - padding)),
+		y: Math.max(padding, Math.min(event.clientY, window.innerHeight - rect.height - padding)),
+	};
 }
 
 function openSelectedItem() {
-	const file = contextMenu.value.file;
+	const file = primarySelectedFile.value || contextMenu.value.file;
 	closeContextMenu();
 	if (!file?.is_folder) return;
 	openFolder(file);
+}
+
+function getActionFiles(fallbackFile = contextMenu.value.file) {
+	return selectedFiles.value.length ? selectedFiles.value : (fallbackFile ? [fallbackFile] : []);
 }
 
 function closeDetails() {
@@ -520,7 +624,7 @@ async function createNewFolder() {
 }
 
 async function renameSelectedFile() {
-	const file = contextMenu.value.file;
+	const file = primarySelectedFile.value || contextMenu.value.file;
 	if (!file) return;
 
 	const nextName = window.prompt('Nama baru', file.file_name);
@@ -542,10 +646,10 @@ async function renameSelectedFile() {
 }
 
 async function deleteSelectedFile() {
-	const file = contextMenu.value.file;
-	if (!file) return;
+	const files = getActionFiles();
+	if (!files.length) return;
 
-	const confirmed = window.confirm(`Hapus ${file.file_name}?`);
+	const confirmed = window.confirm(files.length === 1 ? `Hapus ${files[0].file_name}?` : `Hapus ${files.length} item yang dipilih?`);
 	closeContextMenu();
 	if (!confirmed) return;
 
@@ -553,7 +657,12 @@ async function deleteSelectedFile() {
 	isActionRunning.value = true;
 
 	try {
-		await api.deleteFile(file.id);
+		if (files.length === 1) {
+			await api.deleteFile(files[0].id);
+		} else {
+			await api.deleteFiles(files.map((file) => file.id));
+		}
+		clearSelection();
 		await refreshCurrentFolder();
 	} catch (error) {
 		actionError.value = error.message;
@@ -563,7 +672,7 @@ async function deleteSelectedFile() {
 }
 
 async function showSelectedFileDetails() {
-	const file = contextMenu.value.file;
+	const file = primarySelectedFile.value || contextMenu.value.file;
 	if (!file) return;
 
 	closeContextMenu();
@@ -644,6 +753,14 @@ function triggerDownload(file) {
 	closeContextMenu();
 	if (file?.is_folder) return;
 	window.open(api.downloadUrl(file.id), '_blank', 'noopener,noreferrer');
+}
+
+function downloadSelection() {
+	const downloadableFiles = getActionFiles().filter((file) => !file.is_folder);
+	closeContextMenu();
+	for (const file of downloadableFiles) {
+		window.open(api.downloadUrl(file.id), '_blank', 'noopener,noreferrer');
+	}
 }
 
 function handleGlobalPointer() {
@@ -776,7 +893,31 @@ onBeforeUnmount(() => {
 			</div>
 
 			<div class="mb-3 flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
-				<h2 class="m-0 text-base font-medium text-[#202124] dark:text-slate-100">File</h2>
+				<div v-if="selectedCount" class="flex flex-wrap items-center gap-1.5 rounded-full bg-[#e8f0fe] px-2 py-1 text-[#174ea6] dark:bg-sky-500/15 dark:text-sky-200">
+					<button type="button" class="inline-flex size-9 items-center justify-center rounded-full transition hover:bg-[#d2e3fc] dark:hover:bg-sky-500/20" title="Batal pilih" @click="clearSelection">
+						<IconX :size="18" :stroke="2" />
+					</button>
+					<span class="pr-2 text-sm font-semibold">{{ selectedCount }} dipilih</span>
+					<button v-if="primarySelectedFile?.is_folder && selectedCount === 1" type="button" class="inline-flex size-9 items-center justify-center rounded-full transition hover:bg-[#d2e3fc] dark:hover:bg-sky-500/20" title="Buka" @click="openSelectedItem">
+						<IconFolder :size="18" :stroke="2" />
+					</button>
+					<button v-if="selectedCount === 1 && !primarySelectedFile?.is_folder" type="button" class="inline-flex size-9 items-center justify-center rounded-full transition disabled:cursor-not-allowed disabled:opacity-45 enabled:hover:bg-[#d2e3fc] dark:enabled:hover:bg-sky-500/20" title="Pratinjau" :disabled="!canPreviewSelection" @click="openPreview(primarySelectedFile)">
+						<IconEye :size="18" :stroke="2" />
+					</button>
+					<button type="button" class="inline-flex size-9 items-center justify-center rounded-full transition disabled:cursor-not-allowed disabled:opacity-45 enabled:hover:bg-[#d2e3fc] dark:enabled:hover:bg-sky-500/20" title="Unduh" :disabled="!canDownloadSelection" @click="downloadSelection">
+						<IconDownload :size="18" :stroke="2" />
+					</button>
+					<button type="button" class="inline-flex size-9 items-center justify-center rounded-full transition disabled:cursor-not-allowed disabled:opacity-45 enabled:hover:bg-[#d2e3fc] dark:enabled:hover:bg-sky-500/20" title="Ganti Nama" :disabled="!canRenameSelection" @click="renameSelectedFile">
+						<IconEdit :size="18" :stroke="2" />
+					</button>
+					<button type="button" class="inline-flex size-9 items-center justify-center rounded-full transition disabled:cursor-not-allowed disabled:opacity-45 enabled:hover:bg-[#d2e3fc] dark:enabled:hover:bg-sky-500/20" title="Detail" :disabled="selectedCount !== 1" @click="showSelectedFileDetails">
+						<IconInfoCircle :size="18" :stroke="2" />
+					</button>
+					<button type="button" class="inline-flex size-9 items-center justify-center rounded-full text-[#c5221f] transition hover:bg-[#fce8e6] dark:text-red-300 dark:hover:bg-red-950/30" title="Hapus" @click="deleteSelectedFile">
+						<IconTrash :size="18" :stroke="2" />
+					</button>
+				</div>
+				<h2 v-else class="m-0 text-base font-medium text-[#202124] dark:text-slate-100">File</h2>
 				<div class="relative w-full sm:w-[280px]">
 					<IconSearch :size="18" :stroke="2" class="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-[#5f6368] dark:text-slate-400" />
 					<input class="h-11 w-full rounded-full border border-[#dadce0] bg-white pl-11 pr-4 text-sm text-[#202124] outline-none transition focus:border-[#1a73e8] dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:focus:border-sky-400" type="search" :value="searchTerm" placeholder="Telusuri folder ini" @input="fileTreeStore.applySearch($event.target.value)" />
@@ -805,7 +946,7 @@ onBeforeUnmount(() => {
 					</button>
 				</div>
 
-				<div v-for="item in sortedFiles" :key="item.id" class="grid min-h-[52px] grid-cols-[minmax(220px,2fr)_1.1fr_1fr_140px] items-center gap-3 border-t border-[#eceff1] px-[18px] dark:border-slate-700 max-lg:grid-cols-[minmax(180px,1.8fr)_1fr_1fr]" :class="item.is_folder ? 'cursor-pointer hover:bg-black/[0.02] dark:hover:bg-white/6' : 'hover:bg-black/[0.02] dark:hover:bg-white/6'" @dblclick="openFolder(item)" @contextmenu="openContextMenu($event, item)">
+				<div v-for="item in sortedFiles" :key="item.id" class="grid min-h-[52px] cursor-default select-none grid-cols-[minmax(220px,2fr)_1.1fr_1fr_140px] items-center gap-3 border-t border-[#eceff1] px-[18px] dark:border-slate-700 max-lg:grid-cols-[minmax(180px,1.8fr)_1fr_1fr]" :class="isSelected(item) ? 'bg-[#e8f0fe] dark:bg-sky-500/15' : 'hover:bg-black/[0.02] dark:hover:bg-white/6'" @click="selectItem($event, item)" @dblclick="openItemOnDoubleClick(item)" @contextmenu="openContextMenu($event, item)">
 					<div class="flex items-center gap-2.5 text-[#202124] dark:text-slate-100">
 						<component :is="getFileIcon(item)" :size="18" :stroke="1.8" class="text-[#5f6368] dark:text-slate-400" />
 						<span class="truncate">{{ item.display_name || item.file_name }}</span>
@@ -820,8 +961,8 @@ onBeforeUnmount(() => {
 			</div>
 
 			<div v-else class="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-				<div v-for="item in sortedFiles" :key="item.id" class="group rounded-[22px] border border-[#e0e3e7] bg-white p-4 transition hover:border-[#d2e3fc] hover:shadow-[0_10px_30px_rgba(32,33,36,0.08)] dark:border-slate-700 dark:bg-slate-800 dark:hover:border-slate-500" @dblclick="openFolder(item)" @contextmenu="openContextMenu($event, item)">
-					<button type="button" class="flex w-full flex-col items-start gap-4 text-left" @click="item.is_folder ? openFolder(item) : null">
+				<div v-for="item in sortedFiles" :key="item.id" class="group select-none rounded-[22px] border p-4 transition hover:border-[#d2e3fc] hover:shadow-[0_10px_30px_rgba(32,33,36,0.08)] dark:hover:border-slate-500" :class="isSelected(item) ? 'border-[#1a73e8] bg-[#e8f0fe] dark:border-sky-400 dark:bg-sky-500/15' : 'border-[#e0e3e7] bg-white dark:border-slate-700 dark:bg-slate-800'" @click="selectItem($event, item)" @dblclick="openItemOnDoubleClick(item)" @contextmenu="openContextMenu($event, item)">
+					<button type="button" class="flex w-full flex-col items-start gap-4 text-left">
 						<div class="flex w-full items-start justify-between gap-3">
 							<div class="grid size-12 place-items-center rounded-2xl bg-[#f1f3f4] text-[#5f6368] dark:bg-slate-700 dark:text-slate-300">
 								<component :is="getFileIcon(item)" :size="22" :stroke="1.8" />
@@ -842,26 +983,26 @@ onBeforeUnmount(() => {
 				<div v-if="isLoading" class="col-span-full rounded-2xl border border-dashed border-[#dadce0] bg-white px-5 py-8 text-center text-[#5f6368] dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400">Memuat metadata mirror...</div>
 			</div>
 
-			<div v-if="contextMenu.visible" class="fixed z-50 min-w-[220px] overflow-hidden rounded-2xl border border-[#e0e3e7] bg-white py-2 shadow-[0_16px_40px_rgba(32,33,36,0.2)] dark:border-slate-700 dark:bg-slate-800 dark:shadow-[0_16px_40px_rgba(15,23,42,0.45)]" :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }" @click.stop @contextmenu.stop>
-				<button v-if="contextMenu.file?.is_folder" type="button" class="flex w-full items-center gap-3 px-4 py-3 text-left text-sm text-[#202124] hover:bg-[#f8fafd] dark:text-slate-100 dark:hover:bg-slate-700/70" @click="openSelectedItem">
+			<div v-if="contextMenu.visible" ref="contextMenuRef" class="fixed z-50 min-w-[220px] overflow-hidden rounded-2xl border border-[#e0e3e7] bg-white py-2 shadow-[0_16px_40px_rgba(32,33,36,0.2)] dark:border-slate-700 dark:bg-slate-800 dark:shadow-[0_16px_40px_rgba(15,23,42,0.45)]" :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }" @click.stop @contextmenu.stop>
+				<button v-if="primarySelectedFile?.is_folder && selectedCount === 1" type="button" class="flex w-full items-center gap-3 px-4 py-3 text-left text-sm text-[#202124] hover:bg-[#f8fafd] dark:text-slate-100 dark:hover:bg-slate-700/70" @click="openSelectedItem">
 					<IconFolder :size="17" :stroke="2" />
 					<span>Buka</span>
 				</button>
-				<button v-if="!contextMenu.file?.is_folder" type="button" class="flex w-full items-center gap-3 px-4 py-3 text-left text-sm text-[#202124] hover:bg-[#f8fafd] disabled:cursor-not-allowed disabled:opacity-50 dark:text-slate-100 dark:hover:bg-slate-700/70" :disabled="!canPreviewFile(contextMenu.file)" @click="openPreview(contextMenu.file)">
+				<button v-if="selectedCount === 1 && !primarySelectedFile?.is_folder" type="button" class="flex w-full items-center gap-3 px-4 py-3 text-left text-sm text-[#202124] hover:bg-[#f8fafd] disabled:cursor-not-allowed disabled:opacity-50 dark:text-slate-100 dark:hover:bg-slate-700/70" :disabled="!canPreviewSelection" @click="openPreview(primarySelectedFile)">
 					<IconEye :size="17" :stroke="2" />
 					<span>Pratinjau</span>
 				</button>
-				<button v-if="!contextMenu.file?.is_folder" type="button" class="flex w-full items-center gap-3 px-4 py-3 text-left text-sm text-[#202124] hover:bg-[#f8fafd] disabled:cursor-not-allowed disabled:opacity-50 dark:text-slate-100 dark:hover:bg-slate-700/70" @click="triggerDownload(contextMenu.file)">
+				<button type="button" class="flex w-full items-center gap-3 px-4 py-3 text-left text-sm text-[#202124] hover:bg-[#f8fafd] disabled:cursor-not-allowed disabled:opacity-50 dark:text-slate-100 dark:hover:bg-slate-700/70" :disabled="!canDownloadSelection" @click="downloadSelection">
 					<IconDownload :size="17" :stroke="2" />
 					<span>Unduh</span>
 				</button>
-				<button type="button" class="flex w-full items-center gap-3 px-4 py-3 text-left text-sm text-[#202124] hover:bg-[#f8fafd] dark:text-slate-100 dark:hover:bg-slate-700/70" @click="renameSelectedFile">
+				<button type="button" class="flex w-full items-center gap-3 px-4 py-3 text-left text-sm text-[#202124] hover:bg-[#f8fafd] disabled:cursor-not-allowed disabled:opacity-50 dark:text-slate-100 dark:hover:bg-slate-700/70" :disabled="!canRenameSelection" @click="renameSelectedFile">
 					<IconEdit :size="17" :stroke="2" />
 					<span>Ganti Nama</span>
 				</button>
-				<button type="button" class="flex w-full items-center gap-3 px-4 py-3 text-left text-sm text-[#202124] hover:bg-[#f8fafd] dark:text-slate-100 dark:hover:bg-slate-700/70" @click="showSelectedFileDetails">
-					<IconEye :size="17" :stroke="2" />
-					<span>{{ contextMenu.file?.is_folder ? 'Detail Folder' : 'Detail File' }}</span>
+				<button type="button" class="flex w-full items-center gap-3 px-4 py-3 text-left text-sm text-[#202124] hover:bg-[#f8fafd] disabled:cursor-not-allowed disabled:opacity-50 dark:text-slate-100 dark:hover:bg-slate-700/70" :disabled="selectedCount !== 1" @click="showSelectedFileDetails">
+					<IconInfoCircle :size="17" :stroke="2" />
+					<span>{{ primarySelectedFile?.is_folder ? 'Detail Folder' : 'Detail File' }}</span>
 				</button>
 				<button type="button" class="flex w-full items-center gap-3 px-4 py-3 text-left text-sm text-[#c5221f] hover:bg-[#fce8e6] dark:text-red-300 dark:hover:bg-red-950/30" @click="deleteSelectedFile">
 					<IconTrash :size="17" :stroke="2" />

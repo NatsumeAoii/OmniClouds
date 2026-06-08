@@ -43,6 +43,12 @@ export const api = {
 			method: 'DELETE',
 		});
 	},
+	deleteFiles(fileIds) {
+		return request('/files/bulk/delete', {
+			method: 'POST',
+			body: JSON.stringify({ ids: fileIds }),
+		});
+	},
 	getGoogleIntegrationStatus() {
 		return request('/accounts/google/status');
 	},

@@ -44,6 +44,38 @@ router.get('/files', (req, res) => {
 	res.json({ data: files });
 });
 
+router.post('/files/bulk/delete', async (req, res, next) => {
+	try {
+		const ids = Array.isArray(req.body?.ids) ? [...new Set(req.body.ids.filter(Boolean))] : [];
+		if (!ids.length) {
+			return res.status(400).json({ error: 'At least one file id is required' });
+		}
+
+		const contexts = ids.map((id) => ({ id, ...getFileContext(id) }));
+		const invalid = contexts.find((context) => !context.file || !context.account || context.account.status !== 'active' || !context.adapter);
+		if (invalid) {
+			return res.status(invalid.file ? 409 : 404).json({ error: invalid.file ? 'One or more file accounts are no longer connected' : 'One or more files were not found' });
+		}
+
+		const touchedAccountIds = new Set();
+		for (const context of contexts) {
+			await context.adapter.deleteFile(context.file);
+			touchedAccountIds.add(context.account.id);
+		}
+
+		for (const accountId of touchedAccountIds) {
+			const account = getAccountById(accountId);
+			if (account) {
+				await syncAccount(account);
+			}
+		}
+
+		return res.json({ data: { success: true, count: contexts.length } });
+	} catch (error) {
+		next(error);
+	}
+});
+
 router.get('/files/:id', async (req, res, next) => {
 	try {
 		const context = getFileContext(req.params.id);
