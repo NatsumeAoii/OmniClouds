@@ -85,11 +85,11 @@ export function getDropboxIntegrationStatus() {
 	};
 }
 
-export function createDropboxAuthorizationRequest() {
+export function createDropboxAuthorizationRequest(userId) {
 	assertDropboxConfigured();
 
 	const state = randomUUID();
-	oauthStates.set(state, { createdAt: Date.now() });
+	oauthStates.set(state, { userId, createdAt: Date.now() });
 
 	const authorizationUrl = new URL('https://www.dropbox.com/oauth2/authorize');
 	authorizationUrl.searchParams.set('client_id', env.dropboxClientId);
@@ -113,7 +113,8 @@ export async function completeDropboxAccountLink({ code, state }) {
 		throw new Error('Missing Dropbox OAuth code or state');
 	}
 
-	if (!oauthStates.has(state)) {
+	const authState = oauthStates.get(state);
+	if (!authState) {
 		throw new Error('Invalid or expired Dropbox OAuth state');
 	}
 
@@ -131,6 +132,7 @@ export async function completeDropboxAccountLink({ code, state }) {
 	}
 
 	const account = upsertCloudAccount({
+		userId: authState.userId,
 		id: randomUUID(),
 		email: profile.email,
 		provider: 'dropbox',
@@ -152,7 +154,7 @@ export async function completeDropboxAccountLink({ code, state }) {
 		status: 'active',
 	});
 
-	await syncAccount(account);
+	await syncAccount(authState.userId, account);
 
 	return {
 		account,

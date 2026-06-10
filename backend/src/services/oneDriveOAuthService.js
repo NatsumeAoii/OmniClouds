@@ -83,11 +83,11 @@ export function getOneDriveIntegrationStatus() {
 	};
 }
 
-export function createOneDriveAuthorizationRequest() {
+export function createOneDriveAuthorizationRequest(userId) {
 	assertOneDriveConfigured();
 
 	const state = randomUUID();
-	oauthStates.set(state, { createdAt: Date.now() });
+	oauthStates.set(state, { userId, createdAt: Date.now() });
 
 	const authorizationUrl = new URL(`${getAuthorityBase()}/authorize`);
 	authorizationUrl.searchParams.set('client_id', env.onedriveClientId);
@@ -111,7 +111,8 @@ export async function completeOneDriveAccountLink({ code, state }) {
 		throw new Error('Missing OneDrive OAuth code or state');
 	}
 
-	if (!oauthStates.has(state)) {
+	const authState = oauthStates.get(state);
+	if (!authState) {
 		throw new Error('Invalid or expired OneDrive OAuth state');
 	}
 
@@ -125,6 +126,7 @@ export async function completeOneDriveAccountLink({ code, state }) {
 	}
 
 	const account = upsertCloudAccount({
+		userId: authState.userId,
 		id: randomUUID(),
 		email: profile.email,
 		provider: 'onedrive',
@@ -147,7 +149,7 @@ export async function completeOneDriveAccountLink({ code, state }) {
 		status: 'active',
 	});
 
-	await syncAccount(account);
+	await syncAccount(authState.userId, account);
 
 	return {
 		account,

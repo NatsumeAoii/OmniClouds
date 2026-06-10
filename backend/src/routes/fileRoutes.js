@@ -4,14 +4,17 @@ import { getAccountById, getActiveAccounts } from '../services/accountService.js
 import { createAdapter } from '../services/adapterRegistry.js';
 import { selectBestAccount } from '../services/spaceAllocator.js';
 import { syncAccount } from '../services/syncService.js';
+import { requireAppUser } from '../middleware/authMiddleware.js';
 
 const router = Router();
+
+router.use(requireAppUser);
 
 function encodeSharedFileId(accountId, remoteFileId) {
 	return `shared:${accountId}:${Buffer.from(String(remoteFileId)).toString('base64url')}`;
 }
 
-function mapSharedItem(account, item, localFile = getFileByRemoteId(account.id, item.remote_file_id)) {
+function mapSharedItem(userId, account, item, localFile = getFileByRemoteId(userId, account.id, item.remote_file_id)) {
 	return {
 		...(localFile || {}),
 		...item,
@@ -35,13 +38,13 @@ function decodeSharedFileId(fileId) {
 	};
 }
 
-async function getSharedFileContext(fileId) {
+async function getSharedFileContext(userId, fileId) {
 	const parsed = decodeSharedFileId(fileId);
 	if (!parsed) {
 		return { file: null, account: null, adapter: null };
 	}
 
-	const account = getAccountById(parsed.accountId);
+	const account = getAccountById(userId, parsed.accountId);
 	if (!account) {
 		return { file: null, account: null, adapter: null };
 	}
@@ -92,13 +95,13 @@ async function getSharedFileContext(fileId) {
 	};
 }
 
-async function getFileContext(fileId) {
-	const file = getFileById(fileId);
+async function getFileContext(userId, fileId) {
+	const file = getFileById(userId, fileId);
 	if (!file) {
-		return getSharedFileContext(fileId);
+		return getSharedFileContext(userId, fileId);
 	}
 
-	const account = getAccountById(file.cloud_account_id);
+	const account = getAccountById(userId, file.cloud_account_id);
 	if (!account) {
 		return { file, account: null, adapter: null };
 	}
@@ -124,14 +127,14 @@ function ensureFileContext(context, res) {
 	return true;
 }
 
-async function listSharedWithMeFiles() {
-	const accounts = getActiveAccounts();
+async function listSharedWithMeFiles(userId) {
+	const accounts = getActiveAccounts(userId);
 	const settled = await Promise.allSettled(accounts.map(async (account) => {
 		const adapter = createAdapter(account);
 		const items = await adapter.listSharedWithMe();
 
 		return items
-			.map((item) => mapSharedItem(account, item))
+			.map((item) => mapSharedItem(userId, account, item))
 			.filter((item) => Boolean(item.remote_file_id));
 	}));
 
@@ -149,12 +152,12 @@ async function listSharedWithMeFiles() {
 router.get('/files', async (req, res, next) => {
 	try {
 		const files = req.query.starred === '1'
-			? listStarredFiles()
+			? listStarredFiles(req.user.id)
 			: req.query.recent === '1'
-				? listRecentFiles()
+				? listRecentFiles(req.user.id)
 				: req.query.shared === '1'
-					? await listSharedWithMeFiles()
-					: listFilesByPath(req.query.path || '/');
+					? await listSharedWithMeFiles(req.user.id)
+					: listFilesByPath(req.user.id, req.query.path || '/');
 		res.json({ data: files });
 	} catch (error) {
 		next(error);
@@ -163,7 +166,7 @@ router.get('/files', async (req, res, next) => {
 
 router.get('/files/:id/shared-children', async (req, res, next) => {
 	try {
-		const context = await getFileContext(req.params.id);
+		const context = await getFileContext(req.user.id, req.params.id);
 		if (!ensureFileContext(context, res)) {
 			return;
 		}
@@ -174,7 +177,7 @@ router.get('/files/:id/shared-children', async (req, res, next) => {
 
 		const items = await context.adapter.listSharedFolderChildren(context.file);
 		return res.json({
-			data: items.map((item) => mapSharedItem(context.account, item)).filter((item) => Boolean(item.remote_file_id)),
+			data: items.map((item) => mapSharedItem(req.user.id, context.account, item)).filter((item) => Boolean(item.remote_file_id)),
 		});
 	} catch (error) {
 		next(error);
@@ -183,7 +186,7 @@ router.get('/files/:id/shared-children', async (req, res, next) => {
 
 router.patch('/files/:id/star', async (req, res, next) => {
 	try {
-		const context = await getFileContext(req.params.id);
+		const context = await getFileContext(req.user.id, req.params.id);
 		if (!ensureFileContext(context, res)) {
 			return;
 		}
@@ -193,12 +196,12 @@ router.patch('/files/:id/star', async (req, res, next) => {
 
 		if (supportsStarred) {
 			await context.adapter.setFileStarred(context.file, isStarred);
-			await syncAccount(context.account);
+			await syncAccount(req.user.id, context.account);
 			if (!decodeSharedFileId(context.file.id)) {
-				updateFileStarredByRemoteId(context.account.id, context.file.remote_file_id, isStarred);
+				updateFileStarredByRemoteId(req.user.id, context.account.id, context.file.remote_file_id, isStarred);
 			}
 		} else {
-			setFileStarred(context.file.id, isStarred);
+			setFileStarred(req.user.id, context.file.id, isStarred);
 		}
 		return res.json({ data: { success: true, is_starred: isStarred, provider_sync: supportsStarred } });
 	} catch (error) {
@@ -213,7 +216,7 @@ router.post('/files/bulk/delete', async (req, res, next) => {
 			return res.status(400).json({ error: 'At least one file id is required' });
 		}
 
-		const contexts = await Promise.all(ids.map(async (id) => ({ id, ...await getFileContext(id) })));
+		const contexts = await Promise.all(ids.map(async (id) => ({ id, ...await getFileContext(req.user.id, id) })));
 		const invalid = contexts.find((context) => !context.file || !context.account || context.account.status !== 'active' || !context.adapter);
 		if (invalid) {
 			return res.status(invalid.file ? 409 : 404).json({ error: invalid.file ? 'One or more file accounts are no longer connected' : 'One or more files were not found' });
@@ -226,9 +229,9 @@ router.post('/files/bulk/delete', async (req, res, next) => {
 		}
 
 		for (const accountId of touchedAccountIds) {
-			const account = getAccountById(accountId);
+			const account = getAccountById(req.user.id, accountId);
 			if (account) {
-				await syncAccount(account);
+				await syncAccount(req.user.id, account);
 			}
 		}
 
@@ -240,7 +243,7 @@ router.post('/files/bulk/delete', async (req, res, next) => {
 
 router.get('/files/:id', async (req, res, next) => {
 	try {
-		const context = await getFileContext(req.params.id);
+		const context = await getFileContext(req.user.id, req.params.id);
 		if (!ensureFileContext(context, res)) {
 			return;
 		}
@@ -259,7 +262,7 @@ router.get('/files/:id', async (req, res, next) => {
 
 router.get('/files/:id/download', async (req, res, next) => {
 	try {
-		const context = await getFileContext(req.params.id);
+		const context = await getFileContext(req.user.id, req.params.id);
 		if (!ensureFileContext(context, res)) {
 			return;
 		}
@@ -278,7 +281,7 @@ router.get('/files/:id/download', async (req, res, next) => {
 
 router.get('/files/:id/preview', async (req, res, next) => {
 	try {
-		const context = await getFileContext(req.params.id);
+		const context = await getFileContext(req.user.id, req.params.id);
 		if (!ensureFileContext(context, res)) {
 			return;
 		}
@@ -317,13 +320,13 @@ router.patch('/files/:id/rename', async (req, res, next) => {
 			return res.status(400).json({ error: 'New name is required' });
 		}
 
-		const context = await getFileContext(req.params.id);
+		const context = await getFileContext(req.user.id, req.params.id);
 		if (!ensureFileContext(context, res)) {
 			return;
 		}
 
 		await context.adapter.renameFile(context.file, name.trim());
-		await syncAccount(context.account);
+		await syncAccount(req.user.id, context.account);
 
 		return res.json({ data: { success: true } });
 	} catch (error) {
@@ -333,13 +336,13 @@ router.patch('/files/:id/rename', async (req, res, next) => {
 
 router.delete('/files/:id', async (req, res, next) => {
 	try {
-		const context = await getFileContext(req.params.id);
+		const context = await getFileContext(req.user.id, req.params.id);
 		if (!ensureFileContext(context, res)) {
 			return;
 		}
 
 		await context.adapter.deleteFile(context.file);
-		await syncAccount(context.account);
+		await syncAccount(req.user.id, context.account);
 
 		return res.json({ data: { success: true } });
 	} catch (error) {
@@ -355,8 +358,8 @@ router.post('/files/folders', async (req, res, next) => {
 			return res.status(400).json({ error: 'Folder name is required' });
 		}
 
-		const { selected } = selectBestAccount(0);
-		const account = getAccountById(selected.id);
+		const { selected } = selectBestAccount(req.user.id, 0);
+		const account = getAccountById(req.user.id, selected.id);
 		const adapter = createAdapter(account);
 
 		await adapter.createFolder({
@@ -364,7 +367,7 @@ router.post('/files/folders', async (req, res, next) => {
 			virtualPath: virtual_path,
 		});
 
-		await syncAccount(account);
+		await syncAccount(req.user.id, account);
 
 		return res.status(201).json({ data: { success: true } });
 	} catch (error) {

@@ -1,9 +1,12 @@
 import { Router } from 'express';
+import { requireAppUser } from '../middleware/authMiddleware.js';
 import { selectBestAccount } from '../services/spaceAllocator.js';
 import { createUploadSession } from '../services/uploadSessionService.js';
 import { handleUpload } from '../services/uploadService.js';
 
 const router = Router();
+
+router.use(requireAppUser);
 
 router.post('/uploads/initiate', (req, res) => {
 	const { file_name, size, mime_type, virtual_path = '/', remote_parent_id = null } = req.body;
@@ -12,8 +15,9 @@ router.post('/uploads/initiate', (req, res) => {
 		return res.status(400).json({ error: 'file_name and size are required' });
 	}
 
-	const allocation = selectBestAccount(Number(size));
+	const allocation = selectBestAccount(req.user.id, Number(size));
 	const session = createUploadSession({
+		user_id: req.user.id,
 		file_name,
 		size: Number(size),
 		mime_type,

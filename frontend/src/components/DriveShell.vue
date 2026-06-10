@@ -28,14 +28,18 @@ import {
 	IconStarFilled,
 	IconUserFilled,
 	IconLanguage,
+	IconLogout,
 } from '@tabler/icons-vue';
+import { useRouter } from 'vue-router';
 import { useAccountManagementStore } from '../stores/accountManagement';
 import { useSettingsStore } from '../stores/settings';
+import { useAuthStore } from '../stores/auth';
 import HelpModal from './HelpModal.vue';
 import ProfileModal from './ProfileModal.vue';
 import LanguageModal from './LanguageModal.vue';
 
 const { t } = useI18n();
+const router = useRouter();
 
 const props = defineProps({
 	currentSection: { type: String, required: true },
@@ -52,7 +56,14 @@ const createMenuRef = ref(null);
 const theme = ref('light');
 const accountStore = useAccountManagementStore();
 const settingsStore = useSettingsStore();
+const authStore = useAuthStore();
 const { accounts } = storeToRefs(accountStore);
+const { isHosted } = storeToRefs(authStore);
+
+async function handleLogout() {
+	await authStore.logout();
+	router.replace('/login');
+}
 
 const totalUsed = computed(() => accounts.value.reduce((sum, account) => sum + Number(account.used_space || 0), 0));
 const totalSpace = computed(() => accounts.value.reduce((sum, account) => sum + Number(account.total_space || 0), 0));
@@ -227,6 +238,9 @@ const profileLinks = [
 				</button>
 				<button type="button" class="hidden size-10 place-items-center rounded-full text-[#5f6368] hover:bg-black/5 dark:text-slate-300 dark:hover:bg-white/10 sm:grid" :title="t('common.settings')">
 					<IconSettings :size="18" :stroke="2" />
+				</button>
+				<button v-if="isHosted" type="button" class="hidden size-10 place-items-center rounded-full text-[#5f6368] hover:bg-black/5 dark:text-slate-300 dark:hover:bg-white/10 sm:grid" :title="t('auth.logout')" @click="handleLogout">
+					<IconLogout :size="18" :stroke="2" />
 				</button>
 			</div>
 		</header>

@@ -2,6 +2,7 @@ import http from 'http';
 import { WebSocketServer } from 'ws';
 import { createApp } from './app.js';
 import { env } from './config/env.js';
+import { LOCAL_USER_ID } from './config/database.js';
 import { registerUploadSocket, unregisterUploadSocket } from './services/websocketHub.js';
 import { runDeltaSync, scheduleSync } from './services/syncService.js';
 
@@ -57,9 +58,11 @@ wss.on('connection', (socket, request) => {
 });
 
 scheduleSync();
-runDeltaSync().catch((error) => {
-	console.error('Initial sync failed:', error);
-});
+if (env.appMode === 'local') {
+	runDeltaSync(LOCAL_USER_ID).catch((error) => {
+		console.error('Initial sync failed:', error);
+	});
+}
 
 server.listen(env.port, () => {
 	console.log(`OmniCloud API listening on http://localhost:${env.port}`);

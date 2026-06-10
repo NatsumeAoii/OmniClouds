@@ -57,11 +57,11 @@ export function getYandexIntegrationStatus() {
 	};
 }
 
-export function createYandexAuthorizationRequest() {
+export function createYandexAuthorizationRequest(userId) {
 	assertYandexConfigured();
 
 	const state = randomUUID();
-	oauthStates.set(state, { createdAt: Date.now() });
+	oauthStates.set(state, { userId, createdAt: Date.now() });
 
 	const authorizationUrl = new URL('https://oauth.yandex.com/authorize');
 	authorizationUrl.searchParams.set('response_type', 'code');
@@ -84,7 +84,8 @@ export async function completeYandexAccountLink({ code, state }) {
 		throw new Error('Missing Yandex OAuth code or state');
 	}
 
-	if (!oauthStates.has(state)) {
+	const authState = oauthStates.get(state);
+	if (!authState) {
 		throw new Error('Invalid or expired Yandex OAuth state');
 	}
 
@@ -94,6 +95,7 @@ export async function completeYandexAccountLink({ code, state }) {
 	const profile = await fetchYandexProfile(tokens.access_token);
 
 	const account = upsertCloudAccount({
+		userId: authState.userId,
 		id: randomUUID(),
 		email: profile.email,
 		provider: 'yandex',
@@ -112,7 +114,7 @@ export async function completeYandexAccountLink({ code, state }) {
 		status: 'active',
 	});
 
-	await syncAccount(account).catch((error) => {
+	await syncAccount(authState.userId, account).catch((error) => {
 		console.warn('[yandex] initial sync failed:', error.message);
 	});
 

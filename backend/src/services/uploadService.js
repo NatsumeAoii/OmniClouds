@@ -4,7 +4,7 @@ import { createAdapter } from './adapterRegistry.js';
 import { getAccountById, markAccountStatus, updateAccountUsage } from './accountService.js';
 import { createFileMetadata, getFileByRemoteId } from './fileService.js';
 import { emitUploadEvent } from './websocketHub.js';
-import { getUploadSession, updateUploadSession, removeUploadSession } from './uploadSessionService.js';
+import { getUploadSessionForUser, updateUploadSession, removeUploadSession } from './uploadSessionService.js';
 import { syncAccount } from './syncService.js';
 
 async function pipeUpload({ req, session }) {
@@ -30,7 +30,10 @@ async function pipeUpload({ req, session }) {
 
 			const attemptUpload = async (accountId) => {
 				tried.add(accountId);
-				const account = getAccountById(accountId);
+				const account = getAccountById(session.user_id, accountId);
+				if (!account) {
+					throw new Error('Target upload account not found');
+				}
 				const adapter = createAdapter(account);
 
 				const result = await adapter.uploadStream({
@@ -62,7 +65,7 @@ async function pipeUpload({ req, session }) {
 				try {
 					({ result: uploadResponse, account } = await attemptUpload(activeAccountId));
 				} catch (error) {
-					markAccountStatus(activeAccountId, 'suspended');
+					markAccountStatus(session.user_id, activeAccountId, 'suspended');
 					const fallbackId = session.fallback_chain.find((id) => !tried.has(id));
 					if (!fallbackId) {
 						throw error;
@@ -72,9 +75,10 @@ async function pipeUpload({ req, session }) {
 				}
 
 				const usedSpace = Number(account.used_space) + Number(session.size);
-				updateAccountUsage(account.id, usedSpace);
+				updateAccountUsage(session.user_id, account.id, usedSpace);
 
 				let metadata = createFileMetadata({
+					user_id: session.user_id,
 					virtual_path: session.virtual_path,
 					file_name: info.filename,
 					is_folder: false,
@@ -85,8 +89,8 @@ async function pipeUpload({ req, session }) {
 					remote_parent_id: uploadResponse.remoteParentId,
 				});
 
-				await syncAccount(account);
-				metadata = getFileByRemoteId(account.id, uploadResponse.remoteFileId) || metadata;
+				await syncAccount(session.user_id, account);
+				metadata = getFileByRemoteId(session.user_id, account.id, uploadResponse.remoteFileId) || metadata;
 
 				updateUploadSession(session.id, { status: 'completed', cloud_account_id: account.id });
 				emitUploadEvent(session.id, {
@@ -121,7 +125,7 @@ async function pipeUpload({ req, session }) {
 }
 
 export async function handleUpload(req, uploadId) {
-	const session = getUploadSession(uploadId);
+	const session = getUploadSessionForUser(req.user.id, uploadId);
 
 	if (!session) {
 		throw new Error('Upload session not found');

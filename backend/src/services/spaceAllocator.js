@@ -29,9 +29,9 @@ function buildResult(selected, allAccounts) {
 	return { selected, fallbackChain };
 }
 
-function selectRoundRobin(accounts, requiredBytes) {
+function selectRoundRobin(userId, accounts, requiredBytes) {
 	const count = accounts.length;
-	const start = getRoundRobinCursor() % count;
+	const start = getRoundRobinCursor(userId) % count;
 
 	let chosenIndex = -1;
 	for (let step = 0; step < count; step += 1) {
@@ -46,18 +46,18 @@ function selectRoundRobin(accounts, requiredBytes) {
 		chosenIndex = start;
 	}
 
-	setRoundRobinCursor((chosenIndex + 1) % count);
+	setRoundRobinCursor(userId, (chosenIndex + 1) % count);
 	return accounts[chosenIndex];
 }
 
-function selectWeightedRoundRobin(accounts, requiredBytes) {
+function selectWeightedRoundRobin(userId, accounts, requiredBytes) {
 	const eligible = accounts.filter((account) => account.freeSpace >= requiredBytes);
 	const pool = eligible.length ? eligible : accounts;
 
 	const weights = pool.map((account) => Math.max(1, Number(account.total_space) || 1));
 	const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
 
-	const state = getSwrrState();
+	const state = getSwrrState(userId);
 	const current = {};
 	let chosen = pool[0];
 	let chosenIndex = 0;
@@ -76,7 +76,7 @@ function selectWeightedRoundRobin(accounts, requiredBytes) {
 
 	current[pool[chosenIndex].id] -= totalWeight;
 
-	setSwrrState(current);
+	setSwrrState(userId, current);
 	return chosen;
 }
 
@@ -94,10 +94,10 @@ function selectManual(accounts, requiredBytes) {
 	return accounts.find((account) => account.freeSpace >= requiredBytes) || accounts[0];
 }
 
-export function selectBestAccount(requiredBytes = 0) {
+export function selectBestAccount(userId, requiredBytes = 0) {
 	const required = Number(requiredBytes) || 0;
-	const { strategy } = getAllocationConfig();
-	const accounts = getOrderedActiveAccounts().map(withFreeSpace);
+	const { strategy } = getAllocationConfig(userId);
+	const accounts = getOrderedActiveAccounts(userId).map(withFreeSpace);
 
 	if (!accounts.length) {
 		throw new Error('No active cloud account available');
@@ -106,10 +106,10 @@ export function selectBestAccount(requiredBytes = 0) {
 	let selected;
 	switch (strategy) {
 		case 'round_robin':
-			selected = selectRoundRobin(accounts, required);
+			selected = selectRoundRobin(userId, accounts, required);
 			break;
 		case 'weighted_round_robin':
-			selected = selectWeightedRoundRobin(accounts, required);
+			selected = selectWeightedRoundRobin(userId, accounts, required);
 			break;
 		case 'least_used':
 			selected = selectLeastUsed(accounts, required);

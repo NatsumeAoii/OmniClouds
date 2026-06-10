@@ -20,6 +20,12 @@ export function getUploadSession(id) {
 	return sessions.get(id);
 }
 
+export function getUploadSessionForUser(userId, id) {
+	const session = sessions.get(id);
+	if (!session || session.user_id !== userId) return null;
+	return session;
+}
+
 export function updateUploadSession(id, patch) {
 	const session = sessions.get(id);
 	if (!session) return null;

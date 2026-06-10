@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { requireAppUser } from '../middleware/authMiddleware.js';
 import {
 	ALLOCATION_STRATEGIES,
 	getAllocationConfig,
@@ -7,6 +8,8 @@ import {
 } from '../services/allocationService.js';
 
 const router = Router();
+
+router.use(requireAppUser);
 
 function serializeAccount(account) {
 	const total = Number(account.total_space) || 0;
@@ -21,14 +24,14 @@ function serializeAccount(account) {
 	};
 }
 
-router.get('/allocation', (_req, res) => {
+router.get('/allocation', (req, res) => {
 	try {
-		const config = getAllocationConfig();
+		const config = getAllocationConfig(req.user.id);
 		res.json({
 			data: {
 				strategy: config.strategy,
 				strategies: ALLOCATION_STRATEGIES,
-				accounts: getOrderedActiveAccounts().map(serializeAccount),
+				accounts: getOrderedActiveAccounts(req.user.id).map(serializeAccount),
 			},
 		});
 	} catch (error) {
@@ -39,12 +42,12 @@ router.get('/allocation', (_req, res) => {
 router.patch('/allocation', (req, res) => {
 	try {
 		const { strategy, order } = req.body || {};
-		const updated = setAllocationConfig({ strategy, order });
+		const updated = setAllocationConfig(req.user.id, { strategy, order });
 		res.json({
 			data: {
 				strategy: updated.strategy,
 				strategies: ALLOCATION_STRATEGIES,
-				accounts: getOrderedActiveAccounts().map(serializeAccount),
+				accounts: getOrderedActiveAccounts(req.user.id).map(serializeAccount),
 			},
 		});
 	} catch (error) {

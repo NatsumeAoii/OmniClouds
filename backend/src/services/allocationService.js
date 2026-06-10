@@ -18,19 +18,19 @@ const SETTING_KEYS = {
 	swrrState: 'allocation_swrr_state',
 };
 
-function readSetting(key) {
-	const row = db.prepare('SELECT value FROM user_settings WHERE key = ?').get(key);
+function readSetting(userId, key) {
+	const row = db.prepare('SELECT value FROM user_settings WHERE user_id = ? AND key = ?').get(userId, key);
 	return row ? row.value : null;
 }
 
-function writeSetting(key, value) {
+function writeSetting(userId, key, value) {
 	db.prepare(`
-		INSERT INTO user_settings (key, value, updated_at)
-		VALUES (?, ?, CURRENT_TIMESTAMP)
-		ON CONFLICT(key) DO UPDATE SET
+		INSERT INTO user_settings (id, user_id, key, value, updated_at)
+		VALUES (lower(hex(randomblob(16))), ?, ?, ?, CURRENT_TIMESTAMP)
+		ON CONFLICT(user_id, key) DO UPDATE SET
 			value = excluded.value,
 			updated_at = CURRENT_TIMESTAMP
-	`).run(key, value);
+	`).run(userId, key, value);
 }
 
 function parseJson(value, fallback) {
@@ -43,17 +43,17 @@ function parseJson(value, fallback) {
 	}
 }
 
-export function getAllocationConfig() {
-	const strategyRaw = readSetting(SETTING_KEYS.strategy);
+export function getAllocationConfig(userId) {
+	const strategyRaw = readSetting(userId, SETTING_KEYS.strategy);
 	const strategy = ALLOCATION_STRATEGIES.includes(strategyRaw) ? strategyRaw : DEFAULT_STRATEGY;
-	const order = parseJson(readSetting(SETTING_KEYS.order), []).filter((id) => typeof id === 'string');
+	const order = parseJson(readSetting(userId, SETTING_KEYS.order), []).filter((id) => typeof id === 'string');
 
 	return { strategy, order };
 }
 
-export function getOrderedActiveAccounts() {
-	const active = getActiveAccounts();
-	const { order } = getAllocationConfig();
+export function getOrderedActiveAccounts(userId) {
+	const active = getActiveAccounts(userId);
+	const { order } = getAllocationConfig(userId);
 	const byId = new Map(active.map((account) => [account.id, account]));
 
 	const ordered = [];
@@ -71,8 +71,8 @@ export function getOrderedActiveAccounts() {
 	return ordered;
 }
 
-export function setAllocationConfig({ strategy, order } = {}) {
-	const current = getAllocationConfig();
+export function setAllocationConfig(userId, { strategy, order } = {}) {
+	const current = getAllocationConfig(userId);
 	let nextStrategy = current.strategy;
 	let nextOrder = current.order;
 	let shouldReset = false;
@@ -85,7 +85,7 @@ export function setAllocationConfig({ strategy, order } = {}) {
 			shouldReset = true;
 		}
 		nextStrategy = strategy;
-		writeSetting(SETTING_KEYS.strategy, strategy);
+		writeSetting(userId, SETTING_KEYS.strategy, strategy);
 	}
 
 	if (order !== undefined) {
@@ -94,33 +94,33 @@ export function setAllocationConfig({ strategy, order } = {}) {
 		}
 		shouldReset = true;
 		nextOrder = order;
-		writeSetting(SETTING_KEYS.order, JSON.stringify(order));
+		writeSetting(userId, SETTING_KEYS.order, JSON.stringify(order));
 	}
 
 	if (shouldReset) {
-		resetRotationState();
+		resetRotationState(userId);
 	}
 
 	return { strategy: nextStrategy, order: nextOrder };
 }
 
-export function resetRotationState() {
-	writeSetting(SETTING_KEYS.rrCursor, '0');
-	writeSetting(SETTING_KEYS.swrrState, '{}');
+export function resetRotationState(userId) {
+	writeSetting(userId, SETTING_KEYS.rrCursor, '0');
+	writeSetting(userId, SETTING_KEYS.swrrState, '{}');
 }
 
-export function getRoundRobinCursor() {
-	return Number(readSetting(SETTING_KEYS.rrCursor)) || 0;
+export function getRoundRobinCursor(userId) {
+	return Number(readSetting(userId, SETTING_KEYS.rrCursor)) || 0;
 }
 
-export function setRoundRobinCursor(cursor) {
-	writeSetting(SETTING_KEYS.rrCursor, String(cursor));
+export function setRoundRobinCursor(userId, cursor) {
+	writeSetting(userId, SETTING_KEYS.rrCursor, String(cursor));
 }
 
-export function getSwrrState() {
-	return parseJson(readSetting(SETTING_KEYS.swrrState), {});
+export function getSwrrState(userId) {
+	return parseJson(readSetting(userId, SETTING_KEYS.swrrState), {});
 }
 
-export function setSwrrState(state) {
-	writeSetting(SETTING_KEYS.swrrState, JSON.stringify(state || {}));
+export function setSwrrState(userId, state) {
+	writeSetting(userId, SETTING_KEYS.swrrState, JSON.stringify(state || {}));
 }

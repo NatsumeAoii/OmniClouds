@@ -47,10 +47,10 @@ export function getGoogleIntegrationStatus() {
 	};
 }
 
-export function createGoogleAuthorizationRequest() {
+export function createGoogleAuthorizationRequest(userId) {
 	const oauthClient = createOAuthClient();
 	const state = randomUUID();
-	oauthStates.set(state, { createdAt: Date.now() });
+	oauthStates.set(state, { userId, createdAt: Date.now() });
 
 	const authorizationUrl = oauthClient.generateAuthUrl({
 		access_type: 'offline',
@@ -77,7 +77,8 @@ export async function completeGoogleAccountLink({ code, state }) {
 		throw new Error('Missing Google OAuth code or state');
 	}
 
-	if (!oauthStates.has(state)) {
+	const authState = oauthStates.get(state);
+	if (!authState) {
 		throw new Error('Invalid or expired Google OAuth state');
 	}
 
@@ -93,6 +94,7 @@ export async function completeGoogleAccountLink({ code, state }) {
 	}
 
 	const account = upsertCloudAccount({
+		userId: authState.userId,
 		id: randomUUID(),
 		email: profile.email,
 		provider: 'google_drive',
@@ -112,7 +114,7 @@ export async function completeGoogleAccountLink({ code, state }) {
 		status: 'active',
 	});
 
-	await syncAccount(account);
+	await syncAccount(authState.userId, account);
 
 	return {
 		account,

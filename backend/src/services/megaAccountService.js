@@ -39,7 +39,7 @@ export function getMegaIntegrationStatus() {
 	};
 }
 
-export async function connectMegaAccount({ email, password, secondFactorCode }) {
+export async function connectMegaAccount(userId, { email, password, secondFactorCode }) {
 	if (!email || !password) {
 		throw new Error('MEGA email and password are required');
 	}
@@ -47,7 +47,7 @@ export async function connectMegaAccount({ email, password, secondFactorCode }) 
 	let lastError = null;
 	for (let attempt = 0; attempt < MEGA_CONNECT_ATTEMPTS; attempt += 1) {
 		try {
-			return await connectMegaAccountOnce({ email, password, secondFactorCode });
+			return await connectMegaAccountOnce(userId, { email, password, secondFactorCode });
 		} catch (error) {
 			lastError = error;
 			if (!isMegaTemporaryError(error) || attempt === MEGA_CONNECT_ATTEMPTS - 1) break;
@@ -62,7 +62,7 @@ export async function connectMegaAccount({ email, password, secondFactorCode }) 
 	throw normalizeMegaConnectError(lastError);
 }
 
-async function connectMegaAccountOnce({ email, password, secondFactorCode }) {
+async function connectMegaAccountOnce(userId, { email, password, secondFactorCode }) {
 
 	const storage = new Storage({
 		email,
@@ -79,6 +79,7 @@ async function connectMegaAccountOnce({ email, password, secondFactorCode }) {
 		const accountEmail = storage.email || email;
 
 		const account = upsertCloudAccount({
+			userId,
 			id: randomUUID(),
 			email: accountEmail,
 			provider: 'mega',
@@ -95,10 +96,10 @@ async function connectMegaAccountOnce({ email, password, secondFactorCode }) {
 		});
 
 		try {
-			await syncAccount(account);
+			await syncAccount(userId, account);
 		} catch (error) {
 			if (!isMegaTemporaryError(error)) throw error;
-			markAccountStatus(account.id, 'active');
+			markAccountStatus(userId, account.id, 'active');
 		}
 
 		return {

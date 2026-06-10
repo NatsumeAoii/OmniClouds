@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { deleteAccount, getAccountById, listAccounts } from '../services/accountService.js';
 import { env } from '../config/env.js';
+import { requireAppUser } from '../middleware/authMiddleware.js';
 import {
 	createGoogleAuthorizationRequest,
 	completeGoogleAccountLink,
@@ -30,8 +31,10 @@ import { clearFilesForAccount } from '../services/fileService.js';
 
 const router = Router();
 
-router.get('/accounts', (_req, res) => {
-	const accounts = listAccounts().map((account) => ({
+router.use(requireAppUser);
+
+router.get('/accounts', (req, res) => {
+	const accounts = listAccounts(req.user.id).map((account) => ({
 		...account,
 		free_space: Number(account.total_space) - Number(account.used_space),
 	}));
@@ -59,27 +62,27 @@ router.get('/accounts/mega/status', (_req, res) => {
 	res.json({ data: getMegaIntegrationStatus() });
 });
 
-router.get('/accounts/google/connect', (_req, res, next) => {
+router.get('/accounts/google/connect', (req, res, next) => {
 	try {
-		const data = createGoogleAuthorizationRequest();
+		const data = createGoogleAuthorizationRequest(req.user.id);
 		res.json({ data });
 	} catch (error) {
 		next(error);
 	}
 });
 
-router.get('/accounts/onedrive/connect', (_req, res, next) => {
+router.get('/accounts/onedrive/connect', (req, res, next) => {
 	try {
-		const data = createOneDriveAuthorizationRequest();
+		const data = createOneDriveAuthorizationRequest(req.user.id);
 		res.json({ data });
 	} catch (error) {
 		next(error);
 	}
 });
 
-router.get('/accounts/dropbox/connect', (_req, res, next) => {
+router.get('/accounts/dropbox/connect', (req, res, next) => {
 	try {
-		const data = createDropboxAuthorizationRequest();
+		const data = createDropboxAuthorizationRequest(req.user.id);
 		res.json({ data });
 	} catch (error) {
 		next(error);
@@ -88,7 +91,7 @@ router.get('/accounts/dropbox/connect', (_req, res, next) => {
 
 router.post('/accounts/mega/connect', async (req, res, next) => {
 	try {
-		const data = await connectMegaAccount(req.body || {});
+		const data = await connectMegaAccount(req.user.id, req.body || {});
 		res.json({ data });
 	} catch (error) {
 		next(error);
@@ -97,7 +100,7 @@ router.post('/accounts/mega/connect', async (req, res, next) => {
 
 router.post('/accounts/s3/connect', async (req, res, next) => {
 	try {
-		const data = await connectS3Account(req.body || {});
+		const data = await connectS3Account(req.user.id, req.body || {});
 		res.json({ data });
 	} catch (error) {
 		next(error);
@@ -106,16 +109,16 @@ router.post('/accounts/s3/connect', async (req, res, next) => {
 
 router.post('/accounts/pcloud/connect', async (req, res, next) => {
 	try {
-		const data = await connectPCloudAccount(req.body || {});
+		const data = await connectPCloudAccount(req.user.id, req.body || {});
 		res.json({ data });
 	} catch (error) {
 		next(error);
 	}
 });
 
-router.get('/accounts/yandex/connect', (_req, res, next) => {
+router.get('/accounts/yandex/connect', (req, res, next) => {
 	try {
-		const data = createYandexAuthorizationRequest();
+		const data = createYandexAuthorizationRequest(req.user.id);
 		res.json({ data });
 	} catch (error) {
 		next(error);
@@ -216,13 +219,13 @@ router.get('/accounts/yandex/callback', async (req, res) => {
 });
 
 router.delete('/accounts/:id', (req, res) => {
-	const account = getAccountById(req.params.id);
+	const account = getAccountById(req.user.id, req.params.id);
 	if (!account) {
 		return res.status(404).json({ error: 'Account not found' });
 	}
 
-	clearFilesForAccount(account.id);
-	deleteAccount(account.id);
+	clearFilesForAccount(req.user.id, account.id);
+	deleteAccount(req.user.id, account.id);
 
 	return res.json({ data: { success: true } });
 });

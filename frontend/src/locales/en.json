@@ -1,4 +1,36 @@
 {
+	"auth": {
+		"loginTitle": "Welcome back",
+		"registerTitle": "Create your account",
+		"loginSubtitle": "Sign in to manage your connected cloud storage.",
+		"registerSubtitle": "Create an account to start unifying your cloud storage.",
+		"brandHeadline": "All your clouds, one home.",
+		"brandSubtext": "Connect Google Drive, OneDrive, Dropbox, MEGA and more into a single unified drive.",
+		"feature1": "Unified storage across every provider",
+		"feature2": "Smart space allocation as you upload",
+		"feature3": "Private, secure, and fully yours",
+		"signingIn": "Signing in",
+		"creatingAccount": "Creating account",
+		"footerMadeBy": "Made by",
+		"footerOpenSourcePrefix": "Open Source on",
+		"footerOpenSource": "GitHub",
+		"email": "Email",
+		"emailPlaceholder": "email{'@'}example.com",
+		"password": "Password",
+		"passwordPlaceholder": "Enter your password",
+		"confirmPassword": "Confirm password",
+		"confirmPasswordPlaceholder": "Re-enter your password",
+		"loginCta": "Sign in",
+		"registerCta": "Create account",
+		"haveAccount": "Already have an account?",
+		"noAccount": "Don't have an account?",
+		"logout": "Sign out",
+		"errors": {
+			"required": "Email and password are required.",
+			"passwordLength": "Password must be at least 8 characters.",
+			"passwordMismatch": "Passwords do not match."
+		}
+	},
 	"common": {
 		"new": "New",
 		"search": "Search",
@@ -187,7 +219,7 @@
 			"title": "Connect pCloud",
 			"hint": "Use your pCloud email and password.",
 			"username": "Email",
-			"usernamePlaceholder": "you{'@'}example.com",
+			"usernamePlaceholder": "email{'@'}example.com",
 			"password": "Password",
 			"passwordPlaceholder": "pCloud account password"
 		},

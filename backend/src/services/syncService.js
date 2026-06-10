@@ -1,5 +1,6 @@
 import cron from 'node-cron';
 import { env } from '../config/env.js';
+import { LOCAL_USER_ID } from '../config/database.js';
 import { getActiveAccounts, markAccountStatus, updateAccountStorage } from './accountService.js';
 import { createAdapter } from './adapterRegistry.js';
 import { clearFilesForAccount, replaceFilesForAccount } from './fileService.js';
@@ -27,8 +28,8 @@ async function fetchAccountSnapshot(account) {
 
 function handleSyncFailure(account, error) {
 	if (isAuthError(error)) {
-		clearFilesForAccount(account.id);
-		markAccountStatus(account.id, 'invalid_token');
+		clearFilesForAccount(account.user_id, account.id);
+		markAccountStatus(account.user_id, account.id, 'invalid_token');
 		console.error(`Auth error for account ${account.email}, marked invalid_token:`, error.message);
 		return;
 	}
@@ -41,27 +42,28 @@ function handleSyncFailure(account, error) {
 
 let lastSyncReport = {
 	lastRunAt: null,
+	userId: null,
 	scannedAccounts: 0,
 	changesDetected: 0,
 };
 
 let activeSyncPromise = null;
 
-export async function runDeltaSync() {
+export async function runDeltaSync(userId) {
 	if (activeSyncPromise) {
 		return activeSyncPromise;
 	}
 
 	activeSyncPromise = (async () => {
-		const accounts = getActiveAccounts();
+		const accounts = getActiveAccounts(userId);
 		let changesDetected = 0;
 
 		for (const account of accounts) {
 			try {
 				const { remoteFiles, storage } = await fetchAccountSnapshot(account);
 
-				replaceFilesForAccount(account.id, remoteFiles);
-				updateAccountStorage(account.id, storage.totalSpace, storage.usedSpace);
+				replaceFilesForAccount(userId, account.id, remoteFiles);
+				updateAccountStorage(userId, account.id, storage.totalSpace, storage.usedSpace);
 				changesDetected += remoteFiles.length;
 			} catch (error) {
 				handleSyncFailure(account, error);
@@ -70,6 +72,7 @@ export async function runDeltaSync() {
 
 		lastSyncReport = {
 			lastRunAt: new Date().toISOString(),
+			userId,
 			scannedAccounts: accounts.length,
 			changesDetected,
 		};
@@ -87,7 +90,10 @@ export async function runDeltaSync() {
 export function scheduleSync() {
 	const interval = Math.max(1, env.syncIntervalMinutes);
 	cron.schedule(`*/${interval} * * * *`, () => {
-		runDeltaSync().catch((error) => {
+		if (env.appMode !== 'local') {
+			return;
+		}
+		runDeltaSync(LOCAL_USER_ID).catch((error) => {
 			console.error('Delta sync failed:', error);
 		});
 	});
@@ -100,12 +106,12 @@ export function getLastSyncReport() {
 	};
 }
 
-export async function syncAccount(account) {
+export async function syncAccount(userId, account) {
 	try {
 		const { remoteFiles, storage } = await fetchAccountSnapshot(account);
 
-		replaceFilesForAccount(account.id, remoteFiles);
-		updateAccountStorage(account.id, storage.totalSpace, storage.usedSpace);
+		replaceFilesForAccount(userId, account.id, remoteFiles);
+		updateAccountStorage(userId, account.id, storage.totalSpace, storage.usedSpace);
 
 		return {
 			accountId: account.id,

@@ -13,7 +13,7 @@ function buildEmailLabel(provider, identifier) {
 	return identifier || `${provider}-account`;
 }
 
-export async function connectS3Account(body = {}) {
+export async function connectS3Account(userId, body = {}) {
 	const {
 		accessKeyId,
 		secretAccessKey,
@@ -68,6 +68,7 @@ export async function connectS3Account(body = {}) {
 	const resolvedTotal = Number(totalSpace) || DEFAULT_S3_TOTAL_SPACE;
 
 	const account = upsertCloudAccount({
+		userId,
 		id: randomUUID(),
 		email,
 		provider: 's3',
@@ -85,15 +86,15 @@ export async function connectS3Account(body = {}) {
 		status: 'active',
 	});
 
-	await syncAccount(account).catch((error) => {
-		markAccountStatus(account.id, 'active');
+	await syncAccount(userId, account).catch((error) => {
+		markAccountStatus(userId, account.id, 'active');
 		console.warn('S3 initial sync warning:', error?.message || error);
 	});
 
 	return { account, profile: { email, provider: 's3' } };
 }
 
-export async function connectPCloudAccount(body = {}) {
+export async function connectPCloudAccount(userId, body = {}) {
 	const { username, password } = body;
 	if (!username || !password) {
 		throw new Error('pCloud username (email) and password are required');
@@ -102,6 +103,7 @@ export async function connectPCloudAccount(body = {}) {
 	const login = await pcloudLogin({ username, password });
 
 	const account = upsertCloudAccount({
+		userId,
 		id: randomUUID(),
 		email: login.email || username,
 		provider: 'pcloud',
@@ -117,7 +119,7 @@ export async function connectPCloudAccount(body = {}) {
 		status: 'active',
 	});
 
-	await syncAccount(account).catch((error) => {
+	await syncAccount(userId, account).catch((error) => {
 		console.warn('pCloud initial sync warning:', error?.message || error);
 	});
 

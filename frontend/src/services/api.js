@@ -1,8 +1,10 @@
-const API_BASE_URL = 'http://localhost:8787/api';
-const WS_BASE_URL = 'ws://localhost:8787/ws/uploads';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8787/api';
+const WS_BASE_URL = import.meta.env.VITE_WS_BASE_URL
+	|| API_BASE_URL.replace(/^http/, 'ws').replace(/\/api$/, '/ws/uploads');
 
 async function request(path, options = {}) {
 	const response = await fetch(`${API_BASE_URL}${path}`, {
+		credentials: 'include',
 		headers: {
 			'Content-Type': 'application/json',
 			...(options.headers || {}),
@@ -12,11 +14,36 @@ async function request(path, options = {}) {
 
 	if (!response.ok) {
 		const payload = await response.json().catch(() => ({ error: 'Unknown API error' }));
-		throw new Error(payload.error || 'API request failed');
+		const error = new Error(payload.error || 'API request failed');
+		error.status = response.status;
+		throw error;
 	}
 
 	return response.json();
 }
+
+export const authApi = {
+	me() {
+		return request('/auth/me');
+	},
+	login(payload) {
+		return request('/auth/login', {
+			method: 'POST',
+			body: JSON.stringify(payload),
+		});
+	},
+	register(payload) {
+		return request('/auth/register', {
+			method: 'POST',
+			body: JSON.stringify(payload),
+		});
+	},
+	logout() {
+		return request('/auth/logout', {
+			method: 'POST',
+		});
+	},
+};
 
 export const settingsApi = {
 	getSettings() {
@@ -150,6 +177,7 @@ export const api = {
 
 		const response = await fetch(`${API_BASE_URL}/uploads/${uploadId}/stream`, {
 			method: 'POST',
+			credentials: 'include',
 			body: formData,
 			signal: options.signal,
 		});
