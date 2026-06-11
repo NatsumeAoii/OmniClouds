@@ -6,6 +6,7 @@ import { createFileMetadata, getFileByRemoteId } from './fileService.js';
 import { emitUploadEvent } from './websocketHub.js';
 import { getUploadSessionForUser, updateUploadSession, removeUploadSession } from './uploadSessionService.js';
 import { syncAccount } from './syncService.js';
+import { isAuthError } from '../utils/providerErrors.js';
 
 async function pipeUpload({ req, session }) {
 	return new Promise((resolve, reject) => {
@@ -65,7 +66,9 @@ async function pipeUpload({ req, session }) {
 				try {
 					({ result: uploadResponse, account } = await attemptUpload(activeAccountId));
 				} catch (error) {
-					markAccountStatus(session.user_id, activeAccountId, 'suspended');
+					if (isAuthError(error)) {
+						markAccountStatus(session.user_id, activeAccountId, 'invalid_token');
+					}
 					const fallbackId = session.fallback_chain.find((id) => !tried.has(id));
 					if (!fallbackId) {
 						throw error;

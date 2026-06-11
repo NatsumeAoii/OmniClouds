@@ -26,6 +26,20 @@ function parseDropboxError(payload, fallback) {
 	return payload.error_summary || payload.error?.['.tag'] || payload.message || fallback;
 }
 
+async function parseDropboxContentErrorResponse(response, fallback) {
+	const raw = await response.text().catch(() => '');
+	if (!raw) {
+		return fallback;
+	}
+
+	try {
+		const parsed = JSON.parse(raw);
+		return parseDropboxError(parsed, fallback);
+	} catch {
+		return raw;
+	}
+}
+
 export class DropboxAdapter extends BaseCloudAdapter {
 	constructor(account) {
 		super(account);
@@ -108,19 +122,26 @@ export class DropboxAdapter extends BaseCloudAdapter {
 	}
 
 	async content(path, { args, body, contentType = 'application/octet-stream' } = {}) {
-		const accessToken = await this.createAccessToken();
-		const response = await fetch(`https://content.dropboxapi.com/2${path}`, {
-			method: 'POST',
-			headers: {
-				Authorization: `Bearer ${accessToken}`,
-				'Dropbox-API-Arg': JSON.stringify(args),
-				...(contentType ? { 'Content-Type': contentType } : {}),
-			},
-			body,
-			...(body ? { duplex: 'half' } : {}),
-		});
+		return this.requestWithReauth(async (accessToken) => {
+			const response = await fetch(`https://content.dropboxapi.com/2${path}`, {
+				method: 'POST',
+				headers: {
+					Authorization: `Bearer ${accessToken}`,
+					'Dropbox-API-Arg': JSON.stringify(args),
+					...(contentType ? { 'Content-Type': contentType } : {}),
+				},
+				body,
+				...(body ? { duplex: 'half' } : {}),
+			});
 
-		return response;
+			if (!response.ok && response.status === 401) {
+				const error = new Error('Dropbox content request unauthorized');
+				error.status = response.status;
+				throw error;
+			}
+
+			return response;
+		});
 	}
 
 	async listFolder(path = '', recursive = true) {
@@ -212,12 +233,18 @@ export class DropboxAdapter extends BaseCloudAdapter {
 				strict_conflict: false,
 			},
 			body: stream.pipe(progressStream),
-			contentType: mimeType || 'application/octet-stream',
+			contentType: 'application/octet-stream',
 		});
 
+		const errorResponse = response.ok ? null : response.clone();
 		const payload = await response.json().catch(() => null);
 		if (!response.ok) {
-			throw new Error(parseDropboxError(payload, 'Failed to upload file to Dropbox'));
+			const message = payload
+				? parseDropboxError(payload, 'Failed to upload file to Dropbox')
+				: await parseDropboxContentErrorResponse(errorResponse, 'Failed to upload file to Dropbox');
+			const error = new Error(message);
+			error.status = response.status;
+			throw error;
 		}
 
 		return {
