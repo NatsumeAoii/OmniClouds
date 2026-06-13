@@ -4,7 +4,7 @@ function defaultCanPreview(file, getFileCategory) {
 	return Boolean(
 		file
 			&& !file.is_folder
-			&& ['image', 'video', 'audio', 'pdf', 'document'].includes(getFileCategory(file)),
+			&& ['image', 'video', 'audio', 'document'].includes(getFileCategory(file)),
 	);
 }
 

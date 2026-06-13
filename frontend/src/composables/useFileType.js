@@ -2,11 +2,9 @@ import {
 	IconArchiveFilled,
 	IconFileDescription,
 	IconFileDescriptionFilled,
-	IconFileFilled,
 	IconFileMusicFilled,
 	IconFileText,
 	IconFileTextFilled,
-	IconFileTypePdf,
 	IconFileZip,
 	IconFolder,
 	IconFolderFilled,
@@ -20,11 +18,11 @@ import {
 const ICON_FACTORY = {
 	folder: { filled: IconFolderFilled, outline: IconFolder },
 	image: { filled: IconPhotoFilled, outline: IconPhoto },
-	pdf: { filled: IconFileFilled, outline: IconFileTypePdf },
 	video: { filled: IconVideoFilled, outline: IconVideo },
 	audio: { filled: IconFileMusicFilled, outline: IconMusic },
 	archive: { filled: IconArchiveFilled, outline: IconFileZip },
 	document: { filled: IconFileTextFilled, outline: IconFileText },
+	other: { filled: IconFileDescriptionFilled, outline: IconFileDescription },
 	all: { filled: IconFileDescriptionFilled, outline: IconFileDescription },
 };
 
@@ -39,7 +37,6 @@ export function getFileCategory(file) {
 	const mimeType = (file.mime_type || file.mimeType || '').toLowerCase();
 	const extension = getFileExtension(file);
 
-	if (mimeType === 'application/pdf' || extension === 'pdf') return 'pdf';
 	if (mimeType.startsWith('image/')) return 'image';
 	if (mimeType.startsWith('video/')) return 'video';
 	if (mimeType.startsWith('audio/')) return 'audio';
@@ -53,6 +50,7 @@ export function getFileCategory(file) {
 		return 'archive';
 	}
 	if (
+		mimeType === 'application/pdf' ||
 		mimeType.startsWith('text/') ||
 		mimeType.includes('document') ||
 		mimeType.includes('word') ||
@@ -65,7 +63,7 @@ export function getFileCategory(file) {
 		return 'document';
 	}
 
-	return 'document';
+	return 'other';
 }
 
 export function getFileIcon(file, filled = false) {

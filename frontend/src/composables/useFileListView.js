@@ -46,12 +46,12 @@ export function useFileListView({
 	const typeOptions = computed(() => [
 		{ value: 'all', label: t('filters.allTypes') },
 		{ value: 'folder', label: t('common.folder') },
+		{ value: 'archive', label: t('filters.archive') },
+		{ value: 'audio', label: t('filters.audio') },
 		{ value: 'document', label: t('filters.document') },
 		{ value: 'image', label: t('filters.image') },
-		{ value: 'pdf', label: t('filters.pdf') },
 		{ value: 'video', label: t('filters.video') },
-		{ value: 'audio', label: t('filters.audio') },
-		{ value: 'archive', label: t('filters.archive') },
+		{ value: 'other', label: t('filters.other') },
 	]);
 
 	const updatedOptions = computed(() => [
