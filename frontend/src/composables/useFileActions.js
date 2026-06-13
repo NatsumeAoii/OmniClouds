@@ -14,10 +14,15 @@ export function useFileActions({
 	refresh,
 	getPreviewType,
 	previewUnsupportedMessage = 'Preview belum didukung untuk tipe file ini.',
+	onProgress,
 }) {
 	if (!errorRef || typeof t !== 'function' || typeof getFileCategory !== 'function' || !uploadQueueStore || typeof refresh !== 'function') {
 		throw new Error('useFileActions: required options missing');
 	}
+
+	const runWithProgress = (label, task) => (typeof onProgress === 'function'
+		? onProgress(label, task)
+		: task());
 
 	const { contextMenu, contextMenuRef, closeContextMenu, openContextMenu: openContextMenuBase } = useContextMenu();
 
@@ -118,11 +123,10 @@ export function useFileActions({
 		if (!nextName?.trim() || nextName.trim() === file.file_name) return;
 		errorRef.value = '';
 		try {
-			if (typeof trackServerOperation === 'function') {
-				await trackServerOperation(file, nextName.trim());
-			} else {
-				await api.renameFile(file.id, { name: nextName.trim() });
-			}
+			const task = () => (typeof trackServerOperation === 'function'
+				? trackServerOperation(file, nextName.trim())
+				: api.renameFile(file.id, { name: nextName.trim() }));
+			await runWithProgress(t('upload.renaming'), task);
 			await refresh();
 		} catch (error) {
 			errorRef.value = error.message;
@@ -142,20 +146,20 @@ export function useFileActions({
 		if (!confirmed) return;
 		errorRef.value = '';
 		try {
-			if (targets.length === 1) {
-				const target = targets[0];
-				if (typeof trackServerOperation === 'function') {
-					await trackServerOperation(target);
-				} else {
-					await api.deleteFile(target.id);
+			const task = () => {
+				if (targets.length === 1) {
+					const target = targets[0];
+					if (typeof trackServerOperation === 'function') {
+						return trackServerOperation(target);
+					}
+					return api.deleteFile(target.id);
 				}
-			} else {
 				if (typeof trackServerOperation === 'function') {
-					await trackServerOperation(targets);
-				} else {
-					await api.deleteFiles(targets.map((file) => file.id));
+					return trackServerOperation(targets);
 				}
-			}
+				return api.deleteFiles(targets.map((file) => file.id));
+			};
+			await runWithProgress(t('upload.deleting'), task);
 			clearSelection();
 			await refresh();
 		} catch (error) {

@@ -135,6 +135,7 @@
 		"noFiles": "Tidak ada file di folder ini.",
 		"noOwner": "Tanpa pemilik",
 		"loadingMetadata": "Sedang memuat...",
+		"processing": "Memproses...",
 		"rename": "Ganti nama",
 		"deleteConfirm": "Hapus {name}?",
 		"deleteConfirmDesc": "Item akan dipindahkan ke sampah.",
