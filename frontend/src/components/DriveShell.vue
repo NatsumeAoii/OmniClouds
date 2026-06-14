@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { storeToRefs } from "pinia";
 import { useI18n } from "vue-i18n";
 import {
@@ -11,6 +11,7 @@ import {
   IconMenu2,
   IconMoon,
   IconPlus,
+  IconSearch,
   IconSettings,
   IconSun,
   IconStar,
@@ -28,6 +29,7 @@ import {
   IconUserFilled,
   IconLanguage,
   IconLogout,
+  IconBell,
 } from "@tabler/icons-vue";
 import { useRouter } from "vue-router";
 import logoUrl from "../assets/logo.webp";
@@ -38,9 +40,15 @@ import { useStorageStats } from "../composables/useStorageStats.js";
 import HelpModal from "./HelpModal.vue";
 import ProfileModal from "./ProfileModal.vue";
 import LanguageModal from "./LanguageModal.vue";
+import UpdatesModal from "./UpdatesModal.vue";
+import { api } from "../services/api";
+import { useFileTreeStore } from "../stores/fileTree";
+import { getFileIcon } from "../composables/useFileType.js";
+import { useIncrementalRender } from "../composables/useIncrementalRender.js";
 
 const { t } = useI18n();
 const router = useRouter();
+const fileTreeStore = useFileTreeStore();
 
 const props = defineProps({
   currentSection: { type: String, required: true },
@@ -53,7 +61,15 @@ const isMobileNavOpen = ref(false);
 const isHelpModalOpen = ref(false);
 const isProfileModalOpen = ref(false);
 const isLanguageModalOpen = ref(false);
+const isUpdatesModalOpen = ref(false);
+const globalSearchTerm = ref("");
+const globalSearchResults = ref([]);
+const isGlobalSearchOpen = ref(false);
+const isGlobalSearchLoading = ref(false);
+const globalSearchError = ref("");
+const globalSearchDebounce = ref(null);
 const createMenuRef = ref(null);
+const searchRef = ref(null);
 const accountStore = useAccountManagementStore();
 const settingsStore = useSettingsStore();
 const authStore = useAuthStore();
@@ -63,6 +79,14 @@ const { theme } = storeToRefs(settingsStore);
 const { isHosted } = storeToRefs(authStore);
 const { storagePercent, storagePercentRounded, storageLabel } =
   useStorageStats();
+const {
+  visibleItems: renderedGlobalSearchResults,
+  handleScroll: handleGlobalSearchScroll,
+} = useIncrementalRender(globalSearchResults, {
+  initialCount: 20,
+  step: 20,
+  threshold: 160,
+});
 
 async function handleLogout() {
   await authStore.logout();
@@ -71,6 +95,80 @@ async function handleLogout() {
 
 function openSettings() {
   router.push("/quota");
+}
+
+function formatSearchDate(value) {
+  if (!value) return "—";
+  try {
+    return new Intl.DateTimeFormat(undefined, {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+    }).format(new Date(value));
+  } catch {
+    return "—";
+  }
+}
+
+function getItemPath(item) {
+  const basePath = item.virtual_path || "/";
+  if (!item.is_folder) return basePath;
+  const nextPath = `${basePath === "/" ? "/" : basePath}${item.file_name}/`;
+  return nextPath.startsWith("/") ? nextPath : `/${nextPath}`;
+}
+
+async function runGlobalSearch(term) {
+  const keyword = term.trim();
+  if (!keyword) {
+    globalSearchResults.value = [];
+    globalSearchError.value = "";
+    isGlobalSearchLoading.value = false;
+    return;
+  }
+
+  isGlobalSearchLoading.value = true;
+  globalSearchError.value = "";
+  try {
+    const { data } = await api.searchFiles(keyword, 80);
+    if (globalSearchTerm.value.trim() === keyword) {
+      globalSearchResults.value = data || [];
+    }
+  } catch (error) {
+    if (globalSearchTerm.value.trim() === keyword) {
+      globalSearchResults.value = [];
+      globalSearchError.value = error.message || "Search failed";
+    }
+  } finally {
+    if (globalSearchTerm.value.trim() === keyword) {
+      isGlobalSearchLoading.value = false;
+    }
+  }
+}
+
+function handleSearchFocus() {
+  isGlobalSearchOpen.value = true;
+}
+
+function clearGlobalSearch() {
+  globalSearchTerm.value = "";
+  globalSearchResults.value = [];
+  globalSearchError.value = "";
+  isGlobalSearchOpen.value = false;
+}
+
+async function openSearchResult(item) {
+  const targetPath = getItemPath(item);
+  clearGlobalSearch();
+  fileTreeStore.pendingHighlightId = item.is_folder ? null : item.id;
+
+  if (router.currentRoute.value.name === "my-drive") {
+    fileTreeStore.pendingPath = null;
+    await fileTreeStore.navigate(targetPath);
+    return;
+  }
+
+  fileTreeStore.pendingPath = targetPath;
+  await router.push({ name: "my-drive" });
 }
 
 function toggleCreateMenu() {
@@ -110,6 +208,14 @@ function closeLanguageModal() {
   isLanguageModalOpen.value = false;
 }
 
+function openUpdatesModal() {
+  isUpdatesModalOpen.value = true;
+}
+
+function closeUpdatesModal() {
+  isUpdatesModalOpen.value = false;
+}
+
 function runCreateAction(action) {
   if (!hasActiveAccount.value) return;
   isCreateMenuOpen.value = false;
@@ -120,6 +226,10 @@ function runCreateAction(action) {
 function handleDocumentClick(event) {
   if (!createMenuRef.value?.contains(event.target)) {
     isCreateMenuOpen.value = false;
+  }
+
+  if (!searchRef.value?.contains(event.target)) {
+    isGlobalSearchOpen.value = false;
   }
 
   if (
@@ -147,6 +257,14 @@ function handleWindowKeydown(event) {
   if (isProfileModalOpen.value) {
     closeProfileModal();
   }
+
+  if (isUpdatesModalOpen.value) {
+    closeUpdatesModal();
+  }
+
+  if (isGlobalSearchOpen.value) {
+    isGlobalSearchOpen.value = false;
+  }
 }
 
 function toggleTheme() {
@@ -165,6 +283,30 @@ onMounted(() => {
 onBeforeUnmount(() => {
   document.removeEventListener("click", handleDocumentClick);
   window.removeEventListener("keydown", handleWindowKeydown);
+  if (globalSearchDebounce.value) {
+    window.clearTimeout(globalSearchDebounce.value);
+  }
+});
+
+watch(globalSearchTerm, (term) => {
+  isGlobalSearchOpen.value = true;
+  if (globalSearchDebounce.value) {
+    window.clearTimeout(globalSearchDebounce.value);
+  }
+
+  if (!term.trim()) {
+    globalSearchResults.value = [];
+    globalSearchError.value = "";
+    isGlobalSearchLoading.value = false;
+    return;
+  }
+
+  isGlobalSearchLoading.value = true;
+  globalSearchError.value = "";
+  globalSearchDebounce.value = window.setTimeout(
+    () => runGlobalSearch(term),
+    250,
+  );
 });
 
 const navItems = computed(() => [
@@ -249,11 +391,12 @@ const profileLinks = [
       @close="closeProfileModal"
     />
     <LanguageModal :open="isLanguageModalOpen" @close="closeLanguageModal" />
+    <UpdatesModal :open="isUpdatesModalOpen" @close="closeUpdatesModal" />
 
     <header
-      class="grid h-16 grid-cols-[1fr_auto] items-center gap-2 px-3 sm:gap-4 sm:px-4 lg:gap-3 lg:pr-4"
+      class="grid h-16 grid-cols-[auto_minmax(0,1fr)] items-center gap-2 px-2 sm:gap-4 sm:px-4 lg:grid-cols-[256px_minmax(320px,720px)_1fr] lg:gap-3 lg:px-0 lg:pr-4"
     >
-      <div class="flex min-w-0 items-center gap-2 lg:gap-3">
+      <div class="flex min-w-0 items-center gap-2 lg:gap-3 lg:pl-4">
         <button
           type="button"
           class="grid size-10 shrink-0 place-items-center rounded-full text-[#5f6368] transition hover:bg-black/5 dark:text-slate-300 dark:hover:bg-white/10 lg:hidden"
@@ -284,7 +427,105 @@ const profileLinks = [
         </div>
       </div>
 
-      <div class="hidden items-center justify-end gap-0.5 lg:flex">
+      <div ref="searchRef" class="relative min-w-0 max-w-full">
+        <div
+          class="grid h-11 grid-cols-[44px_minmax(0,1fr)_42px] items-center rounded-full bg-[#eaf1fb] pr-1.5 dark:bg-slate-800/90 sm:h-12 sm:grid-cols-[52px_minmax(0,1fr)_48px] sm:pr-2.5"
+        >
+          <span
+            class="grid place-items-center text-[#5f6368] dark:text-slate-400"
+          >
+            <IconSearch :size="18" :stroke="2" />
+          </span>
+          <input
+            v-model="globalSearchTerm"
+            type="text"
+            :placeholder="t('header.searchPlaceholder')"
+            class="w-full min-w-0 border-0 bg-transparent text-sm text-[#202124] outline-none placeholder:text-[#5f6368] dark:text-slate-100 dark:placeholder:text-slate-400 sm:text-base"
+            @focus="handleSearchFocus"
+            @keydown.esc.prevent="isGlobalSearchOpen = false"
+          />
+          <button
+            v-if="globalSearchTerm"
+            type="button"
+            class="grid size-8 place-items-center rounded-full text-[#5f6368] transition hover:bg-black/5 dark:text-slate-300 dark:hover:bg-white/10"
+            :aria-label="t('header.clearSearch')"
+            @click="clearGlobalSearch"
+          >
+            <IconX :size="16" :stroke="2" />
+          </button>
+        </div>
+
+        <div
+          v-if="isGlobalSearchOpen && globalSearchTerm.trim()"
+          class="fixed left-2 right-2 top-16 z-50 overflow-hidden rounded-3xl border border-[#dfe6f1] bg-white/98 shadow-[0_18px_50px_rgba(60,64,67,0.24)] backdrop-blur-xl dark:border-slate-700 dark:bg-slate-900/98 dark:shadow-[0_18px_50px_rgba(2,6,23,0.5)] lg:absolute lg:left-0 lg:right-0 lg:top-[calc(100%+8px)]"
+        >
+          <div
+            class="custom-scrollbar max-h-[min(420px,70vh)] overflow-y-auto py-2"
+            @scroll="handleGlobalSearchScroll"
+          >
+            <div
+              v-if="isGlobalSearchLoading && !globalSearchResults.length"
+              class="px-4 py-4 text-sm text-[#5f6368] dark:text-slate-400"
+            >
+              {{ t("header.searchLoading") }}
+            </div>
+            <div
+              v-else-if="globalSearchError"
+              class="px-4 py-4 text-sm text-red-600 dark:text-red-300"
+            >
+              {{ globalSearchError }}
+            </div>
+            <div
+              v-else-if="!globalSearchResults.length"
+              class="px-4 py-4 text-sm text-[#5f6368] dark:text-slate-400"
+            >
+              {{ t("header.searchNoResults") }}
+            </div>
+            <template v-else>
+              <button
+                v-for="item in renderedGlobalSearchResults"
+                :key="item.id"
+                type="button"
+                class="grid w-full grid-cols-[36px_minmax(0,1fr)_auto] items-center gap-3 px-4 py-2.5 text-left transition hover:bg-[#f8fafd] dark:hover:bg-slate-800/80"
+                @click="openSearchResult(item)"
+              >
+                <span
+                  class="grid size-9 place-items-center rounded-2xl bg-[#e8f0fe] text-[#1a73e8] dark:bg-blue-500/15 dark:text-blue-300"
+                >
+                  <component
+                    :is="getFileIcon(item, item.is_folder)"
+                    :size="18"
+                    :stroke="item.is_folder ? 0 : 1.8"
+                  />
+                </span>
+                <span class="min-w-0">
+                  <span
+                    class="block truncate text-sm font-medium text-[#202124] dark:text-slate-100"
+                    >{{ item.display_name || item.file_name }}</span
+                  >
+                  <span
+                    v-if="!item.is_folder"
+                    class="block truncate text-xs text-[#5f6368] dark:text-slate-400"
+                    >{{ item.virtual_path || "/" }}</span
+                  >
+                </span>
+                <span
+                  class="shrink-0 text-xs text-[#5f6368] dark:text-slate-400"
+                  >{{
+                    formatSearchDate(
+                      item.createdTime ||
+                        item.remote_created_time ||
+                        item.created_at,
+                    )
+                  }}</span
+                >
+              </button>
+            </template>
+          </div>
+        </div>
+      </div>
+
+      <div class="hidden items-center justify-end gap-2 lg:flex">
         <button
           type="button"
           class="hidden size-10 place-items-center rounded-full text-[#5f6368] hover:bg-black/5 dark:text-slate-300 dark:hover:bg-white/10 sm:grid"
@@ -309,6 +550,15 @@ const profileLinks = [
           @click="openHelpModal"
         >
           <IconHelp :size="18" :stroke="2" />
+        </button>
+        <button
+          type="button"
+          class="hidden size-10 place-items-center rounded-full text-[#5f6368] hover:bg-black/5 dark:text-slate-300 dark:hover:bg-white/10 sm:grid"
+          :title="t('updates.buttonLabel')"
+          :aria-label="t('updates.buttonLabel')"
+          @click="openUpdatesModal"
+        >
+          <IconBell :size="18" :stroke="2" />
         </button>
         <button
           type="button"

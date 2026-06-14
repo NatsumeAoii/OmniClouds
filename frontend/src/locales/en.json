@@ -77,6 +77,9 @@
 	},
 	"header": {
 		"searchPlaceholder": "Search in OmniCloud",
+		"clearSearch": "Clear search",
+		"searchLoading": "Searching...",
+		"searchNoResults": "No results found.",
 		"openNav": "Open navigation menu",
 		"closeNav": "Close navigation menu",
 		"openProfile": "Open creator profile",
@@ -250,7 +253,7 @@
 	"help": {
 		"title": "OmniCloud Quick Help",
 		"centerTitle": "Help Center",
-		"subtitle": "A brief summary to help you understand OmniCloud's main workflow faster.",
+		"subtitle": "A brief summary to help you understand OmniCloud's main workflow faster",
 		"createFolder": "Create new folder",
 		"createFolderDesc": "Use the New button to create a new folder directly from active storage.",
 		"uploadFiles": "Upload file or folder",
@@ -283,6 +286,22 @@
 		"openSource": "Open Source on GitHub",
 		"madeWith": "Made with ❤️ in Indonesia",
 		"githubLink": "GitHub Link"
+	},
+	"updates": {
+		"buttonLabel": "Update history",
+		"title": "Repository Updates",
+		"subtitle": "Latest updates directly from the official repository",
+		"openRepository": "Open GitHub repository",
+		"stars": "Stars",
+		"latestUpdates": "Latest updates",
+		"lastFetched": "Last fetched {date}",
+		"latestFromGithub": "Showing the latest commits from GitHub.",
+		"loading": "Fetching latest updates...",
+		"dateUnavailable": "Date unavailable",
+		"fallbackCommitMessage": "Latest update",
+		"fallbackAuthor": "Contributor",
+		"fetchError": "Failed to fetch data from GitHub.",
+		"genericError": "Update history could not be loaded."
 	},
 	"upload": {
 		"uploading": "Uploading",

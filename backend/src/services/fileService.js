@@ -39,6 +39,61 @@ export function listFilesByPath(userId, virtualPath = '/') {
 	return buildDisplayNames(rows);
 }
 
+export function searchFiles(userId, term = '', limit = 50) {
+	const normalizedTerm = String(term || '').trim();
+	if (!normalizedTerm) return [];
+
+	const safeLimit = Math.max(1, Math.min(Number(limit) || 50, 100));
+	const rows = db
+		.prepare(`
+      SELECT
+        fm.*, ca.provider, ca.email
+      FROM file_metadata fm
+      INNER JOIN cloud_accounts ca ON ca.id = fm.cloud_account_id
+			WHERE fm.user_id = ?
+				AND ca.status = 'active'
+				AND fm.file_name LIKE ? COLLATE NOCASE
+      ORDER BY
+				CASE WHEN fm.file_name LIKE ? COLLATE NOCASE THEN 0 ELSE 1 END,
+				fm.is_folder DESC,
+				COALESCE(fm.remote_created_time, fm.created_at) DESC,
+				fm.file_name COLLATE NOCASE ASC
+			LIMIT ?
+    `)
+		.all(userId, `%${normalizedTerm}%`, `${normalizedTerm}%`, safeLimit);
+
+	return buildDisplayNames(rows);
+}
+
+export function createFileMetadata(record) {
+	const payload = {
+		id: randomUUID(),
+		user_id: record.user_id,
+		virtual_path: normalizePath(record.virtual_path),
+		file_name: record.file_name,
+		is_folder: record.is_folder ? 1 : 0,
+		size: record.size,
+		mime_type: resolveMimeType(record),
+		cloud_account_id: record.cloud_account_id,
+		remote_file_id: record.remote_file_id,
+		remote_parent_id: record.remote_parent_id || null,
+		remote_created_time: record.remote_created_time || null,
+		remote_modified_time: record.remote_modified_time || null,
+	};
+
+	db.prepare(`
+    INSERT INTO file_metadata (
+			id, user_id, virtual_path, file_name, is_folder, size, mime_type,
+			cloud_account_id, remote_file_id, remote_parent_id, remote_created_time, remote_modified_time
+    ) VALUES (
+			@id, @user_id, @virtual_path, @file_name, @is_folder, @size, @mime_type,
+			@cloud_account_id, @remote_file_id, @remote_parent_id, @remote_created_time, @remote_modified_time
+    )
+  `).run(payload);
+
+	return getFileById(payload.user_id, payload.id);
+}
+
 export function getFileById(userId, id) {
 	const row = db
 		.prepare(`

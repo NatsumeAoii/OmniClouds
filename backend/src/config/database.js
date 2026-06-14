@@ -4,7 +4,7 @@ import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const dbPath = path.resolve(__dirname, '../../omnicloud.db');
+const dbPath = process.env.DATABASE_PATH || path.resolve(__dirname, '../../omnicloud.db');
 
 export const LOCAL_USER_ID = 'local-default-user';
 export const LOCAL_USER_EMAIL = 'local@omnicloud.local';

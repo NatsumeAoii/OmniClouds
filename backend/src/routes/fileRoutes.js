@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { listFilesByPath, getFileById, getFileByRemoteId, getLocalFilesByRemoteId, listRecentFiles, listStarredFiles, setFileStarred, updateFileStarredByRemoteId, renameFileMetadata, deleteFileMetadataById, upsertFileByRemoteId } from '../services/fileService.js';
+import { listFilesByPath, getFileById, getFileByRemoteId, getLocalFilesByRemoteId, listRecentFiles, listStarredFiles, searchFiles, setFileStarred, updateFileStarredByRemoteId, renameFileMetadata, deleteFileMetadataById, upsertFileByRemoteId } from '../services/fileService.js';
 import { getAccountById, getActiveAccounts, adjustAccountUsage } from '../services/accountService.js';
 import { createAdapter } from '../services/adapterRegistry.js';
 import { selectBestAccount } from '../services/spaceAllocator.js';
@@ -226,7 +226,9 @@ async function listSharedWithMeFiles(userId) {
 
 router.get('/files', async (req, res, next) => {
 	try {
-		const files = req.query.starred === '1'
+		const files = req.query.search
+			? searchFiles(req.user.id, req.query.search, req.query.limit)
+			: req.query.starred === '1'
 			? listStarredFiles(req.user.id)
 			: req.query.recent === '1'
 				? listRecentFiles(req.user.id)

@@ -24,6 +24,7 @@ export const useFileTreeStore = defineStore('fileTree', {
 	state: () => ({
 		currentPath: '/',
 		pendingPath: null,
+		pendingHighlightId: null,
 		files: [],
 		filteredFiles: [],
 		breadcrumbs: [{ label: 'Root', path: '/' }],

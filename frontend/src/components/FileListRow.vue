@@ -16,6 +16,7 @@ const props = defineProps({
   selected: { type: Boolean, default: false },
   nameField: { type: String, default: "file_name" },
   showStar: { type: Boolean, default: true },
+  highlighted: { type: Boolean, default: false },
 });
 
 const emit = defineEmits(["select", "open", "contextmenu"]);
@@ -46,8 +47,11 @@ function handleContextMenu(event) {
     :class="
       selected
         ? 'bg-gradient-to-r from-[#e8f0fe] to-[#f8fbff] shadow-[inset_4px_0_0_#1a73e8] dark:from-sky-500/15 dark:to-slate-800 dark:shadow-[inset_4px_0_0_#38bdf8]'
-        : 'hover:bg-black/[0.02] dark:hover:bg-white/6'
+        : highlighted
+          ? 'bg-gradient-to-r from-amber-50 to-[#fffdf5] shadow-[inset_4px_0_0_#f59e0b] dark:from-amber-400/15 dark:to-slate-800 dark:shadow-[inset_4px_0_0_#fbbf24]'
+          : 'hover:bg-black/[0.02] dark:hover:bg-white/6'
     "
+    :data-file-id="item.id"
     @click="handleClick"
     @dblclick="handleDblClick"
     @contextmenu="handleContextMenu"
@@ -56,14 +60,16 @@ function handleContextMenu(event) {
       class="flex min-w-0 items-center gap-2.5 text-[#202124] dark:text-slate-100"
     >
       <component
-        :is="getFileIcon(item, selected)"
+        :is="getFileIcon(item, selected || highlighted)"
         :size="18"
-        :stroke="selected ? 0 : 1.8"
+        :stroke="selected || highlighted ? 0 : 1.8"
         class="transition-transform duration-200 group-hover:scale-110"
         :class="
           selected
             ? 'text-[#1a73e8] drop-shadow-sm dark:text-sky-300'
-            : 'text-[#5f6368] dark:text-slate-400'
+            : highlighted
+              ? 'text-amber-500 drop-shadow-sm dark:text-amber-300'
+              : 'text-[#5f6368] dark:text-slate-400'
         "
       />
       <TruncateMarquee :text="displayName" />

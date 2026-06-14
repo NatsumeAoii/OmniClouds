@@ -77,6 +77,9 @@
 	},
 	"header": {
 		"searchPlaceholder": "Telusuri di OmniCloud",
+		"clearSearch": "Bersihkan pencarian",
+		"searchLoading": "Mencari...",
+		"searchNoResults": "Tidak ada hasil ditemukan.",
 		"openNav": "Buka menu navigasi",
 		"closeNav": "Tutup menu navigasi",
 		"openProfile": "Buka profil creator",
@@ -250,7 +253,7 @@
 	"help": {
 		"title": "Bantuan cepat OmniCloud",
 		"centerTitle": "Pusat Bantuan",
-		"subtitle": "Ringkasan singkat untuk membantu Anda memahami alur utama OmniCloud dengan lebih cepat.",
+		"subtitle": "Ringkasan singkat untuk membantu Anda memahami alur utama OmniCloud dengan lebih cepat",
 		"createFolder": "Buat folder baru",
 		"createFolderDesc": "Gunakan tombol Baru untuk membuat folder baru langsung dari penyimpanan aktif.",
 		"uploadFiles": "Upload file atau folder",
@@ -283,6 +286,22 @@
 		"openSource": "Open Source di GitHub",
 		"madeWith": "Made with ❤️ in Indonesia",
 		"githubLink": "Link GitHub"
+	},
+	"updates": {
+		"buttonLabel": "Riwayat update",
+		"title": "Riwayat Repository",
+		"subtitle": "Update terbaru langsung dari repository resmi",
+		"openRepository": "Buka repository GitHub",
+		"stars": "Bintang",
+		"latestUpdates": "Update terbaru",
+		"lastFetched": "Terakhir dimuat {date}",
+		"latestFromGithub": "Menampilkan commit terbaru dari GitHub.",
+		"loading": "Mengambil update terbaru...",
+		"dateUnavailable": "Tanggal tidak tersedia",
+		"fallbackCommitMessage": "Update terbaru",
+		"fallbackAuthor": "Kontributor",
+		"fetchError": "Gagal mengambil data dari GitHub.",
+		"genericError": "Riwayat update belum bisa dimuat."
 	},
 	"upload": {
 		"uploading": "Mengupload",

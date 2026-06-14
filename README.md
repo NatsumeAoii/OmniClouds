@@ -265,6 +265,52 @@ Default local endpoints:
 - Frontend: `http://localhost:5173`
 - API: `http://localhost:8787`
 
+## 🐳 Docker setup
+
+The project includes Docker integration for running the API and production frontend behind Nginx.
+
+### 1. Create the backend environment file
+
+```bash
+copy backend/.env.example backend/.env
+```
+
+Then fill in the provider credentials and secrets in `backend/.env`.
+
+For the default Docker Compose setup, the app is exposed at `http://localhost:8080`, so OAuth redirect URLs should use the proxied API URLs:
+
+```env
+GOOGLE_REDIRECT_URI=http://localhost:8080/api/accounts/google/callback
+ONEDRIVE_REDIRECT_URI=http://localhost:8080/api/accounts/onedrive/callback
+DROPBOX_REDIRECT_URI=http://localhost:8080/api/accounts/dropbox/callback
+YANDEX_REDIRECT_URI=http://localhost:8080/api/accounts/yandex/callback
+```
+
+These values are also set in `docker-compose.yml` so they override the local-development defaults from `backend/.env` when running with Compose.
+
+### 2. Build and start the containers
+
+```bash
+docker compose up --build
+```
+
+Open the app at:
+
+- Frontend: `http://localhost:8080`
+- API through Nginx proxy: `http://localhost:8080/api`
+
+### 3. Stop the containers
+
+```bash
+docker compose down
+```
+
+SQLite data is persisted in the Docker volume `omnicloud_api_data`. To remove containers and the persisted Docker database volume:
+
+```bash
+docker compose down -v
+```
+
 ## 📌 Available scripts
 
 ### Root scripts

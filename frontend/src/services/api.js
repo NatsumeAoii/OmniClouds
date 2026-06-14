@@ -79,6 +79,10 @@ export const api = {
 		const query = new URLSearchParams({ path: virtualPath }).toString();
 		return request(`/files?${query}`);
 	},
+	searchFiles(term, limit = 50) {
+		const query = new URLSearchParams({ search: term, limit: String(limit) }).toString();
+		return request(`/files?${query}`);
+	},
 	listStarredFiles() {
 		return request('/files?starred=1');
 	},
