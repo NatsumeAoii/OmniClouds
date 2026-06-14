@@ -1,7 +1,7 @@
 import cron from 'node-cron';
 import { env } from '../config/env.js';
 import { LOCAL_USER_ID } from '../config/database.js';
-import { getActiveAccounts, markAccountStatus, updateAccountStorage } from './accountService.js';
+import { getActiveAccounts, listUserIdsWithActiveAccounts, markAccountStatus, updateAccountStorage } from './accountService.js';
 import { createAdapter } from './adapterRegistry.js';
 import { clearFilesForAccount, replaceFilesForAccount } from './fileService.js';
 import { isAuthError, withRetry } from '../utils/providerErrors.js';
@@ -12,7 +12,8 @@ async function fetchAccountSnapshot(account) {
 			const adapter = createAdapter(account);
 			const remoteFiles = await adapter.fetchStructure();
 			const storage = await adapter.getStorageSummary();
-			return { remoteFiles, storage };
+			const providerStarred = Boolean(adapter.getCapabilities?.().starred);
+			return { remoteFiles, storage, providerStarred };
 		},
 		{
 			retries: 3,
@@ -47,28 +48,40 @@ let lastSyncReport = {
 	changesDetected: 0,
 };
 
-let activeSyncPromise = null;
+const activeSyncPromises = new Map();
 
 export async function runDeltaSync(userId) {
-	if (activeSyncPromise) {
-		return activeSyncPromise;
+	const inFlight = activeSyncPromises.get(userId);
+	if (inFlight) {
+		return inFlight;
 	}
 
-	activeSyncPromise = (async () => {
+	const syncPromise = (async () => {
 		const accounts = getActiveAccounts(userId);
-		let changesDetected = 0;
 
-		for (const account of accounts) {
-			try {
-				const { remoteFiles, storage } = await fetchAccountSnapshot(account);
+		// Each account is an independent provider round-trip. Fetching them in
+		// parallel turns total sync latency from the sum of all account times
+		// into the slowest single account's time. The per-account local DB
+		// writes (replace/update) are synchronous in better-sqlite3 and touch
+		// disjoint rows keyed by cloud_account_id, so concurrent resolution is
+		// safe. Each task captures its own failure so one bad account never
+		// rejects the batch.
+		const perAccountChanges = await Promise.all(
+			accounts.map(async (account) => {
+				try {
+					const { remoteFiles, storage, providerStarred } = await fetchAccountSnapshot(account);
 
-				replaceFilesForAccount(userId, account.id, remoteFiles);
-				updateAccountStorage(userId, account.id, storage.totalSpace, storage.usedSpace);
-				changesDetected += remoteFiles.length;
-			} catch (error) {
-				handleSyncFailure(account, error);
-			}
-		}
+					replaceFilesForAccount(userId, account.id, remoteFiles, { preserveStarred: !providerStarred });
+					updateAccountStorage(userId, account.id, storage.totalSpace, storage.usedSpace);
+					return remoteFiles.length;
+				} catch (error) {
+					handleSyncFailure(account, error);
+					return 0;
+				}
+			}),
+		);
+
+		const changesDetected = perAccountChanges.reduce((sum, count) => sum + count, 0);
 
 		lastSyncReport = {
 			lastRunAt: new Date().toISOString(),
@@ -80,37 +93,45 @@ export async function runDeltaSync(userId) {
 		return lastSyncReport;
 	})();
 
+	activeSyncPromises.set(userId, syncPromise);
+
 	try {
-		return await activeSyncPromise;
+		return await syncPromise;
 	} finally {
-		activeSyncPromise = null;
+		activeSyncPromises.delete(userId);
 	}
 }
 
 export function scheduleSync() {
 	const interval = Math.max(1, env.syncIntervalMinutes);
 	cron.schedule(`*/${interval} * * * *`, () => {
-		if (env.appMode !== 'local') {
+		if (env.appMode === 'local') {
+			runDeltaSync(LOCAL_USER_ID).catch((error) => {
+				console.error('Delta sync failed:', error);
+			});
 			return;
 		}
-		runDeltaSync(LOCAL_USER_ID).catch((error) => {
-			console.error('Delta sync failed:', error);
-		});
+
+		for (const userId of listUserIdsWithActiveAccounts()) {
+			runDeltaSync(userId).catch((error) => {
+				console.error(`Delta sync failed for user ${userId}:`, error);
+			});
+		}
 	});
 }
 
 export function getLastSyncReport() {
 	return {
 		...lastSyncReport,
-		isRunning: Boolean(activeSyncPromise),
+		isRunning: activeSyncPromises.size > 0,
 	};
 }
 
 export async function syncAccount(userId, account) {
 	try {
-		const { remoteFiles, storage } = await fetchAccountSnapshot(account);
+		const { remoteFiles, storage, providerStarred } = await fetchAccountSnapshot(account);
 
-		replaceFilesForAccount(userId, account.id, remoteFiles);
+		replaceFilesForAccount(userId, account.id, remoteFiles, { preserveStarred: !providerStarred });
 		updateAccountStorage(userId, account.id, storage.totalSpace, storage.usedSpace);
 
 		return {

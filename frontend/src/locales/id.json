@@ -88,7 +88,8 @@
 		"uploadFile": "Upload File",
 		"uploadFolder": "Upload Folder",
 		"storage": "Penyimpanan",
-		"storageUsed": "{used} dari {total} telah digunakan"
+		"storageUsed": "{used} dari {total} telah digunakan",
+		"connectAccountFirst": "Hubungkan akun penyimpanan terlebih dahulu"
 	},
 	"home": {
 		"subtitle": "Cloud accounts",

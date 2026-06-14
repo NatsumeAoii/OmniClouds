@@ -21,9 +21,16 @@ export function emitUploadEvent(uploadId, event) {
 	const sockets = uploadSockets.get(uploadId);
 	if (!sockets) return;
 
+	const payload = JSON.stringify(event);
 	for (const socket of sockets) {
-		if (socket.readyState === 1) {
-			socket.send(JSON.stringify(event));
+		if (socket.readyState !== 1) continue;
+		try {
+			socket.send(payload);
+		} catch (error) {
+			// A failed progress emit (e.g. a socket that closed mid-flight) must
+			// never break the critical upload path that calls this hook.
+			unregisterUploadSocket(uploadId, socket);
+			console.warn(`Failed to emit upload event for ${uploadId}:`, error?.message || error);
 		}
 	}
 }

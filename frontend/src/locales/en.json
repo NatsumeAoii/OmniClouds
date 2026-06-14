@@ -88,7 +88,8 @@
 		"uploadFile": "Upload File",
 		"uploadFolder": "Upload Folder",
 		"storage": "Storage",
-		"storageUsed": "{used} of {total} used"
+		"storageUsed": "{used} of {total} used",
+		"connectAccountFirst": "Connect a storage account first"
 	},
 	"home": {
 		"subtitle": "Cloud accounts",

@@ -291,11 +291,11 @@ onBeforeUnmount(() => {
 
 <template>
 	<DriveShell current-section="drive" @new-folder="createNewFolder" @upload-files="openFilePicker" @upload-folder="openFolderPicker">
-		<div class="relative min-h-[calc(100vh-84px)] rounded-[24px] bg-white px-4 py-[18px] pb-5 text-[#202124] dark:bg-slate-800 dark:text-slate-100 sm:px-6" @click="clearSelection" @dragenter.prevent="handleDragEnter" @dragover.prevent="handleDragEnter" @dragleave.prevent="handleDragLeave" @drop.prevent="handleDrop">
+		<div class="relative min-h-[calc(100vh-84px)] rounded-[12px] bg-white px-4 py-4 pb-4 text-[#202124] dark:bg-slate-800 dark:text-slate-100 sm:px-6" @click="clearSelection" @dragenter.prevent="handleDragEnter" @dragover.prevent="handleDragEnter" @dragleave.prevent="handleDragLeave" @drop.prevent="handleDrop">
 			<input ref="fileInputRef" class="hidden" type="file" multiple @change="onFileInputChange" />
 			<input ref="folderInputRef" class="hidden" type="file" multiple webkitdirectory directory @change="onFolderInputChange" />
 
-			<div v-if="isDragActive" class="pointer-events-none absolute inset-4 z-20 grid place-items-center rounded-[24px] border-2 border-dashed border-[#1a73e8] bg-[#e8f0fe]/90 text-center dark:bg-slate-900/90">
+			<div v-if="isDragActive" class="pointer-events-none absolute inset-4 z-20 grid place-items-center rounded-[12px] border-2 border-dashed border-[#1a73e8] bg-[#e8f0fe]/90 text-center dark:bg-slate-900/90">
 				<div>
 					<p class="text-lg font-semibold text-[#1a73e8]">Lepas file di sini untuk upload</p>
 					<p class="mt-2 text-sm text-[#5f6368] dark:text-slate-400">File dan folder akan diunggah ke lokasi Drive saat ini.</p>

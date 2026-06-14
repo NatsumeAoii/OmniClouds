@@ -2,6 +2,21 @@ import { randomUUID } from 'crypto';
 
 const sessions = new Map();
 
+const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
+const SWEEP_INTERVAL_MS = 60 * 60 * 1000;
+
+function sweepExpiredSessions(now = Date.now()) {
+	for (const [id, session] of sessions) {
+		const createdAt = Date.parse(session.createdAt) || 0;
+		if (now - createdAt > SESSION_TTL_MS) {
+			sessions.delete(id);
+		}
+	}
+}
+
+const sweepTimer = setInterval(() => sweepExpiredSessions(), SWEEP_INTERVAL_MS);
+sweepTimer.unref?.();
+
 export function createUploadSession(payload) {
 	const id = randomUUID();
 	const session = {
@@ -14,10 +29,6 @@ export function createUploadSession(payload) {
 
 	sessions.set(id, session);
 	return session;
-}
-
-export function getUploadSession(id) {
-	return sessions.get(id);
 }
 
 export function getUploadSessionForUser(userId, id) {

@@ -2,10 +2,9 @@ import Busboy from 'busboy';
 import { PassThrough } from 'stream';
 import { createAdapter } from './adapterRegistry.js';
 import { getAccountById, markAccountStatus, updateAccountUsage } from './accountService.js';
-import { createFileMetadata, getFileByRemoteId } from './fileService.js';
+import { upsertFileByRemoteId } from './fileService.js';
 import { emitUploadEvent } from './websocketHub.js';
 import { getUploadSessionForUser, updateUploadSession, removeUploadSession } from './uploadSessionService.js';
-import { syncAccount } from './syncService.js';
 import { isAuthError } from '../utils/providerErrors.js';
 
 async function pipeUpload({ req, session }) {
@@ -45,7 +44,9 @@ async function pipeUpload({ req, session }) {
 					virtualPath: session.virtual_path,
 					remoteParentId: session.remote_parent_id,
 					onProgress: (bytes) => {
-						const percent = Math.min(100, Math.round((bytes / session.size) * 100));
+						const percent = session.size > 0
+							? Math.min(100, Math.round((bytes / session.size) * 100))
+							: 0;
 						emitUploadEvent(session.id, {
 							type: 'upload:progress',
 							uploadId: session.id,
@@ -80,20 +81,22 @@ async function pipeUpload({ req, session }) {
 				const usedSpace = Number(account.used_space) + Number(session.size);
 				updateAccountUsage(session.user_id, account.id, usedSpace);
 
-				let metadata = createFileMetadata({
+				// Mirror only the freshly uploaded file into the local metadata
+				// table. Previously this path triggered a full account re-walk
+				// (fetchStructure + delete-all + re-insert); upserting the single
+				// returned remote id keeps the mirror correct in O(1).
+				const metadata = upsertFileByRemoteId({
 					user_id: session.user_id,
 					virtual_path: session.virtual_path,
-					file_name: info.filename,
+					file_name: uploadResponse.fileName || info.filename,
 					is_folder: false,
-					size: session.size,
-					mime_type: info.mimeType,
+					size: Number(uploadResponse.size || session.size || 0),
+					mime_type: uploadResponse.mimeType || info.mimeType,
 					cloud_account_id: account.id,
 					remote_file_id: uploadResponse.remoteFileId,
 					remote_parent_id: uploadResponse.remoteParentId,
+					remote_modified_time: new Date().toISOString(),
 				});
-
-				await syncAccount(session.user_id, account);
-				metadata = getFileByRemoteId(session.user_id, account.id, uploadResponse.remoteFileId) || metadata;
 
 				updateUploadSession(session.id, { status: 'completed', cloud_account_id: account.id });
 				emitUploadEvent(session.id, {

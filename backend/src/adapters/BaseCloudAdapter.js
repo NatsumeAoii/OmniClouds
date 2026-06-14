@@ -1,5 +1,4 @@
-import { Readable, Transform } from 'stream';
-import { randomUUID } from 'crypto';
+import { Transform } from 'stream';
 
 export class BaseCloudAdapter {
 	constructor(account) {
@@ -37,36 +36,16 @@ export class BaseCloudAdapter {
 		});
 	}
 
-	async uploadStream({ stream, size, fileName, mimeType, virtualPath, remoteParentId, onProgress }) {
-		const progressStream = this.createProgressStream(onProgress);
-		const passthrough = stream.pipe(progressStream);
-
-		await new Promise((resolve, reject) => {
-			passthrough.on('error', reject);
-			passthrough.on('end', resolve);
-			passthrough.resume();
-		});
-
-		return {
-			remoteFileId: `${this.account.provider}-${randomUUID()}`,
-			remoteParentId: remoteParentId || `${this.account.provider}-${virtualPath}`,
-			size,
-			fileName,
-			mimeType,
-		};
+	async uploadStream() {
+		throw new Error(`Upload is not implemented for provider ${this.account.provider}`);
 	}
 
-	async createFolder({ name, virtualPath, remoteParentId }) {
-		return {
-			remoteFileId: `${this.account.provider}-${randomUUID()}`,
-			remoteParentId: remoteParentId || `${this.account.provider}-${virtualPath}`,
-			fileName: name,
-		};
+	async createFolder() {
+		throw new Error(`Create folder is not implemented for provider ${this.account.provider}`);
 	}
 
-	async getDownloadStream(fileRecord) {
-		const content = `Simulated download for ${fileRecord.file_name} from ${this.account.provider}`;
-		return Readable.from([content]);
+	async getDownloadStream() {
+		throw new Error(`Download is not implemented for provider ${this.account.provider}`);
 	}
 
 	async renameFile() {

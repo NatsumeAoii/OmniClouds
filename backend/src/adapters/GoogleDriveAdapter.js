@@ -110,29 +110,55 @@ export class GoogleDriveAdapter extends BaseCloudAdapter {
 
 		const byId = new Map(files.map((file) => [file.id, file]));
 
-		const buildFolderPath = (file) => {
-			const parentId = file.parents?.[0];
-			if (!parentId || parentId === 'root') {
+		// Memoize each folder's own path so a parent chain shared by many files
+		// is walked at most once instead of re-traversed per descendant. Without
+		// this, building paths for N items in a tree of depth D costs O(N*D); the
+		// cache makes it O(N) amortized. Keyed by folder id; the value is that
+		// folder's full path including its trailing slash (e.g. "/a/b/").
+		const folderPathById = new Map();
+
+		const resolveFolderOwnPath = (folderId) => {
+			if (!folderId || folderId === 'root') {
 				return '/';
 			}
 
-			const segments = [];
-			const visited = new Set();
-			let currentId = parentId;
+			const cached = folderPathById.get(folderId);
+			if (cached !== undefined) {
+				return cached;
+			}
 
-			while (currentId && currentId !== 'root' && !visited.has(currentId)) {
+			// Walk up the unresolved ancestors, then fill the cache top-down so
+			// every visited folder is memoized in a single pass. A visited set
+			// guards against cyclic/broken parent references from the provider.
+			const chain = [];
+			const visited = new Set();
+			let currentId = folderId;
+
+			while (currentId && currentId !== 'root' && !visited.has(currentId) && !folderPathById.has(currentId)) {
 				visited.add(currentId);
 				const current = byId.get(currentId);
 				if (!current) {
+					currentId = null;
 					break;
 				}
-
-				segments.unshift(current.name);
+				chain.push(current);
 				currentId = current.parents?.[0];
 			}
 
-			return segments.length ? `/${segments.join('/')}/` : '/';
+			let basePath = currentId && folderPathById.has(currentId)
+				? folderPathById.get(currentId)
+				: '/';
+
+			for (let index = chain.length - 1; index >= 0; index -= 1) {
+				const folder = chain[index];
+				basePath = `${basePath}${folder.name}/`;
+				folderPathById.set(folder.id, basePath);
+			}
+
+			return folderPathById.get(folderId) || '/';
 		};
+
+		const buildFolderPath = (file) => resolveFolderOwnPath(file.parents?.[0]);
 
 		return files.map((file) => ({
 			virtual_path: buildFolderPath(file),

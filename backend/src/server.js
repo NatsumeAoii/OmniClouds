@@ -3,6 +3,8 @@ import { WebSocketServer } from 'ws';
 import { createApp } from './app.js';
 import { env } from './config/env.js';
 import { LOCAL_USER_ID } from './config/database.js';
+import { resolveUserFromRequest } from './middleware/authMiddleware.js';
+import { getUploadSessionForUser } from './services/uploadSessionService.js';
 import { registerUploadSocket, unregisterUploadSocket } from './services/websocketHub.js';
 import { runDeltaSync, scheduleSync } from './services/syncService.js';
 
@@ -39,6 +41,17 @@ wss.on('connection', (socket, request) => {
 
 	if (!uploadId) {
 		socket.close(1008, 'uploadId is required');
+		return;
+	}
+
+	const user = resolveUserFromRequest(request);
+	if (!user) {
+		socket.close(1008, 'Authentication required');
+		return;
+	}
+
+	if (!getUploadSessionForUser(user.id, uploadId)) {
+		socket.close(1008, 'Upload session not found');
 		return;
 	}
 

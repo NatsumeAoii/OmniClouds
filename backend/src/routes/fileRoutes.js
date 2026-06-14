@@ -1,14 +1,59 @@
 import { Router } from 'express';
-import { listFilesByPath, getFileById, getFileByRemoteId, listRecentFiles, listStarredFiles, setFileStarred, updateFileStarredByRemoteId } from '../services/fileService.js';
-import { getAccountById, getActiveAccounts } from '../services/accountService.js';
+import { listFilesByPath, getFileById, getFileByRemoteId, getLocalFilesByRemoteId, listRecentFiles, listStarredFiles, setFileStarred, updateFileStarredByRemoteId, renameFileMetadata, deleteFileMetadataById, upsertFileByRemoteId } from '../services/fileService.js';
+import { getAccountById, getActiveAccounts, adjustAccountUsage } from '../services/accountService.js';
 import { createAdapter } from '../services/adapterRegistry.js';
 import { selectBestAccount } from '../services/spaceAllocator.js';
 import { syncAccount } from '../services/syncService.js';
 import { requireAppUser } from '../middleware/authMiddleware.js';
+import { contentDispositionHeader } from '../utils/httpHeaders.js';
 
 const router = Router();
 
 router.use(requireAppUser);
+
+/**
+ * Pipe a provider download stream to the HTTP response with end-to-end failure
+ * handling. Errors before the first byte are surfaced via `next` (so the
+ * central error handler can produce a JSON error). Once streaming has started
+ * the headers are already flushed, so a later upstream error can only be
+ * handled by destroying the response. The client-disconnect handler tears down
+ * the upstream provider stream to avoid leaking that connection.
+ */
+function pipeDownloadStream(stream, res, next) {
+	let streamingStarted = false;
+
+	const destroyStream = () => {
+		if (typeof stream.destroy === 'function') {
+			stream.destroy();
+		}
+	};
+
+	stream.on('data', () => {
+		streamingStarted = true;
+	});
+
+	stream.on('error', (error) => {
+		if (streamingStarted || res.headersSent) {
+			// Headers are already flushed, so we cannot send a JSON error. Log the
+			// upstream cause for diagnostics and abort the response socket. We do
+			// not pass the error to res.destroy to avoid emitting an unhandled
+			// 'error' event on the response.
+			console.error('Download stream failed after streaming started:', error?.message || error);
+			destroyStream();
+			res.destroy();
+			return;
+		}
+		next(error);
+	});
+
+	res.on('close', () => {
+		if (!res.writableEnded) {
+			destroyStream();
+		}
+	});
+
+	stream.pipe(res);
+}
 
 function encodeSharedFileId(accountId, remoteFileId) {
 	return `shared:${accountId}:${Buffer.from(String(remoteFileId)).toString('base64url')}`;
@@ -133,13 +178,20 @@ function ensureFileContext(context, res) {
 	return true;
 }
 
-async function deleteContextFile(userId, context, rawId = context?.file?.id, options = {}) {
-	const { sync = true } = options;
+async function deleteContextFile(userId, context, options = {}) {
+	const { adjustUsage = true } = options;
 	await context.adapter.deleteFile(context.file);
 
-	if (sync && context.account) {
-		await syncAccount(userId, context.account);
+	// Surgically remove the item (and any descendants for folders) from the
+	// local mirror instead of triggering a full account re-walk. Shared items
+	// are not mirrored locally, so this no-ops for them.
+	const { deletedSize, cloudAccountId } = deleteFileMetadataById(userId, context.file.id);
+
+	if (adjustUsage && cloudAccountId && deletedSize) {
+		adjustAccountUsage(userId, cloudAccountId, -deletedSize);
 	}
+
+	return { deletedSize, cloudAccountId };
 }
 
 async function listSharedWithMeFiles(userId) {
@@ -148,16 +200,22 @@ async function listSharedWithMeFiles(userId) {
 		const adapter = createAdapter(account);
 		const items = await adapter.listSharedWithMe();
 
+		const localByRemoteId = getLocalFilesByRemoteId(userId, account.id);
 		return items
-			.map((item) => mapSharedItem(userId, account, item))
+			.map((item) => mapSharedItem(userId, account, item, localByRemoteId.get(item.remote_file_id) || null))
 			.filter((item) => Boolean(item.remote_file_id));
 	}));
 
+	const seenIds = new Set();
 	return settled
 		.filter((result) => result.status === 'fulfilled')
 		.flatMap((result) => result.value)
 		.filter((item) => Boolean(item.remote_file_id))
-		.filter((item, index, items) => items.findIndex((candidate) => candidate.id === item.id) === index)
+		.filter((item) => {
+			if (seenIds.has(item.id)) return false;
+			seenIds.add(item.id);
+			return true;
+		})
 		.sort((left, right) => {
 			const leftTime = new Date(left.modifiedTime || left.createdTime || 0).getTime();
 			const rightTime = new Date(right.modifiedTime || right.createdTime || 0).getTime();
@@ -193,8 +251,9 @@ router.get('/files/:id/shared-children', async (req, res, next) => {
 		}
 
 		const items = await context.adapter.listSharedFolderChildren(context.file);
+		const localByRemoteId = getLocalFilesByRemoteId(req.user.id, context.account.id);
 		return res.json({
-			data: items.map((item) => mapSharedItem(req.user.id, context.account, item)).filter((item) => Boolean(item.remote_file_id)),
+			data: items.map((item) => mapSharedItem(req.user.id, context.account, item, localByRemoteId.get(item.remote_file_id) || null)).filter((item) => Boolean(item.remote_file_id)),
 		});
 	} catch (error) {
 		next(error);
@@ -213,7 +272,9 @@ router.patch('/files/:id/star', async (req, res, next) => {
 
 		if (supportsStarred) {
 			await context.adapter.setFileStarred(context.file, isStarred);
-			await syncAccount(req.user.id, context.account);
+			// The provider is the source of truth for starred state, but a single
+			// flag flip does not warrant a full account re-walk: update the local
+			// mirror directly. Shared items have no local row, so this no-ops.
 			if (!decodeSharedFileId(context.file.id)) {
 				updateFileStarredByRemoteId(req.user.id, context.account.id, context.file.remote_file_id, isStarred);
 			}
@@ -239,17 +300,8 @@ router.post('/files/bulk/delete', async (req, res, next) => {
 			return res.status(invalid.file ? 409 : 404).json({ error: invalid.file ? 'One or more file accounts are no longer connected' : 'One or more files were not found' });
 		}
 
-		const touchedAccountIds = new Set();
 		for (const context of contexts) {
-			await deleteContextFile(req.user.id, context, context.id, { sync: false });
-			touchedAccountIds.add(context.account.id);
-		}
-
-		for (const accountId of touchedAccountIds) {
-			const account = getAccountById(req.user.id, accountId);
-			if (account) {
-				await syncAccount(req.user.id, account);
-			}
+			await deleteContextFile(req.user.id, context);
 		}
 
 		return res.json({ data: { success: true, count: contexts.length } });
@@ -285,12 +337,12 @@ router.get('/files/:id/download', async (req, res, next) => {
 		}
 		const stream = await context.adapter.getDownloadStream(context.file);
 
-		res.setHeader('Content-Disposition', `attachment; filename="${context.file.file_name}"`);
+		res.setHeader('Content-Disposition', contentDispositionHeader('attachment', context.file.file_name));
 		res.setHeader('Content-Type', context.file.mime_type || 'application/octet-stream');
 		if (!context.file.is_folder && context.file.size) {
 			res.setHeader('Content-Length', String(context.file.size));
 		}
-		stream.pipe(res);
+		pipeDownloadStream(stream, res, next);
 	} catch (error) {
 		next(error);
 	}
@@ -318,13 +370,13 @@ router.get('/files/:id/preview', async (req, res, next) => {
 
 		const stream = await context.adapter.getDownloadStream(context.file);
 
-		res.setHeader('Content-Disposition', `inline; filename="${context.file.file_name}"`);
+		res.setHeader('Content-Disposition', contentDispositionHeader('inline', context.file.file_name));
 		res.setHeader('Content-Type', mimeType);
 		if (context.file.size) {
 			res.setHeader('Content-Length', String(context.file.size));
 		}
 
-		stream.pipe(res);
+		pipeDownloadStream(stream, res, next);
 	} catch (error) {
 		next(error);
 	}
@@ -343,7 +395,9 @@ router.patch('/files/:id/rename', async (req, res, next) => {
 		}
 
 		await context.adapter.renameFile(context.file, name.trim());
-		await syncAccount(req.user.id, context.account);
+		// Rename in the local mirror in place (and remap descendant paths for
+		// folders) rather than re-walking the entire provider account.
+		renameFileMetadata(req.user.id, context.file.id, name.trim());
 
 		return res.json({ data: { success: true } });
 	} catch (error) {
@@ -358,7 +412,7 @@ router.delete('/files/:id', async (req, res, next) => {
 			return;
 		}
 
-		await deleteContextFile(req.user.id, context, req.params.id);
+		await deleteContextFile(req.user.id, context);
 
 		return res.json({ data: { success: true } });
 	} catch (error) {
@@ -378,12 +432,31 @@ router.post('/files/folders', async (req, res, next) => {
 		const account = getAccountById(req.user.id, selected.id);
 		const adapter = createAdapter(account);
 
-		await adapter.createFolder({
+		const created = await adapter.createFolder({
 			name: name.trim(),
 			virtualPath: virtual_path,
 		});
 
-		await syncAccount(req.user.id, account);
+		// Mirror just the new folder instead of re-walking the whole account.
+		if (created?.remoteFileId) {
+			upsertFileByRemoteId({
+				user_id: req.user.id,
+				virtual_path: virtual_path,
+				file_name: created.fileName || name.trim(),
+				is_folder: true,
+				size: 0,
+				mime_type: null,
+				cloud_account_id: account.id,
+				remote_file_id: created.remoteFileId,
+				remote_parent_id: created.remoteParentId,
+				remote_created_time: new Date().toISOString(),
+				remote_modified_time: new Date().toISOString(),
+			});
+		} else {
+			// Adapter could not report a stable remote id; fall back to a full
+			// resync so the folder still appears.
+			await syncAccount(req.user.id, account);
+		}
 
 		return res.status(201).json({ data: { success: true } });
 	} catch (error) {

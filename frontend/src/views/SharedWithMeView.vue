@@ -175,7 +175,7 @@ useAutoRefresh(refreshShared, { intervalMs: 30000 });
 
 <template>
 	<DriveShell current-section="shared">
-		<div class="relative min-h-[calc(100vh-84px)] rounded-[24px] bg-white px-4 py-[18px] pb-5 text-[#202124] dark:bg-slate-800 dark:text-slate-100 sm:px-6" @click="clearSelection">
+		<div class="relative min-h-[calc(100vh-84px)] rounded-[12px] bg-white px-4 py-4 pb-4 text-[#202124] dark:bg-slate-800 dark:text-slate-100 sm:px-6" @click="clearSelection">
 			<div class="mb-2 flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
 				<h1 class="m-0">
 					<nav aria-label="Breadcrumb" class="flex flex-wrap items-center gap-1 text-2xl font-normal text-[#202124] dark:text-slate-100">
@@ -208,7 +208,7 @@ useAutoRefresh(refreshShared, { intervalMs: 30000 });
 							<FileListHeader :sortable="false" />
 
 							<template v-for="group in renderedGroupedFiles" :key="group.key">
-								<div class="sticky top-11 z-[1] bg-[#f8fafd] px-[18px] py-2 text-xs font-semibold uppercase tracking-[0.08em] text-[#5f6368] dark:bg-slate-900 dark:text-slate-400">{{ group.label }}</div>
+								<div class="sticky top-9 z-[1] bg-[#f8fafd] px-4 py-1.5 text-xs font-semibold uppercase tracking-[0.08em] text-[#5f6368] dark:bg-slate-900 dark:text-slate-400">{{ group.label }}</div>
 								<FileListRow v-for="item in group.items" :key="item.id" :item="item" :selected="isSelected(item)" @select="(event) => selectItem(event, item)" @open="openItemOnDoubleClick(item)" @contextmenu="(event) => openContextMenu(event, item)" />
 							</template>
 							<div v-if="!groupedFiles.length && !loading" class="p-[18px] text-[#5f6368] dark:text-slate-400">{{ t('shared.empty') }}</div>

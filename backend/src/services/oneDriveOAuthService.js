@@ -2,8 +2,9 @@ import { randomUUID } from 'crypto';
 import { env } from '../config/env.js';
 import { upsertCloudAccount } from './accountService.js';
 import { syncAccount } from './syncService.js';
+import { createOAuthStateStore } from '../utils/oauthStateStore.js';
 
-const oauthStates = new Map();
+const oauthStates = createOAuthStateStore();
 
 function getAuthorityBase() {
 	return `https://login.microsoftonline.com/${encodeURIComponent(env.onedriveTenantId)}/oauth2/v2.0`;

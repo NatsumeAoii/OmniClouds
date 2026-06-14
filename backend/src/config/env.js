@@ -20,6 +20,10 @@ export const env = {
 	syncIntervalMinutes: Number(process.env.SYNC_INTERVAL_MINUTES || 5),
 	authCookieName: process.env.AUTH_COOKIE_NAME || 'omnicloud_session',
 	authSessionTtlHours: Number(process.env.AUTH_SESSION_TTL_HOURS || 24 * 14),
+	authCookieSecure:
+		process.env.AUTH_COOKIE_SECURE !== undefined
+			? process.env.AUTH_COOKIE_SECURE === 'true'
+			: process.env.APP_MODE === 'hosted',
 	authSecret: process.env.AUTH_SECRET || process.env.OMNICLOUD_SECRET_HALF || 'omnicloud-dev-auth-secret',
 	encryptionKey,
 	frontendUrl: process.env.FRONTEND_URL || process.env.CORS_ORIGIN || 'http://localhost:5173',

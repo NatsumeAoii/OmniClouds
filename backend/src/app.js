@@ -47,7 +47,10 @@ export function createApp() {
 
 	app.use((error, _req, res, _next) => {
 		console.error(error);
-		const status = /Authentication required/.test(error?.message || '') ? 401 : /Invalid|required|already|available|not found|unsupported|failed|Unable|Password|email/i.test(error?.message || '') ? 400 : 500;
+		const explicitStatus = Number(error?.status ?? error?.statusCode);
+		const status = Number.isInteger(explicitStatus) && explicitStatus >= 400 && explicitStatus <= 599
+			? explicitStatus
+			: /Authentication required/.test(error?.message || '') ? 401 : /Invalid|required|already|available|not found|unsupported|failed|Unable|Password|email/i.test(error?.message || '') ? 400 : 500;
 		res.status(status).json({
 			error: error.message || 'Internal server error',
 		});

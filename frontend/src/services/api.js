@@ -1,6 +1,23 @@
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8787/api';
-const WS_BASE_URL = import.meta.env.VITE_WS_BASE_URL
-	|| API_BASE_URL.replace(/^http/, 'ws').replace(/\/api$/, '/ws/uploads');
+
+const UPLOAD_WS_PATH = '/ws/uploads';
+
+// Resolve the upload WebSocket endpoint. The server mounts the socket at
+// `/ws/uploads`, so an explicit VITE_WS_BASE_URL that only provides an origin
+// (e.g. `ws://localhost:8787`, as documented in .env.example) must still be
+// pointed at that path — otherwise the handshake never reaches the handler and
+// upload progress silently stops.
+function resolveUploadSocketUrl() {
+	const explicit = import.meta.env.VITE_WS_BASE_URL;
+	if (explicit) {
+		const trimmed = explicit.replace(/\/+$/, '');
+		return trimmed.includes(UPLOAD_WS_PATH) ? trimmed : `${trimmed}${UPLOAD_WS_PATH}`;
+	}
+
+	return API_BASE_URL.replace(/^http/, 'ws').replace(/\/api(\/.*)?$/, UPLOAD_WS_PATH);
+}
+
+const WS_BASE_URL = resolveUploadSocketUrl();
 
 async function request(path, options = {}) {
 	const response = await fetch(`${API_BASE_URL}${path}`, {

@@ -130,7 +130,7 @@ useAutoRefresh(() => refresh(), { intervalMs: 30000 });
 
 <template>
 	<DriveShell current-section="starred">
-		<div class="relative min-h-[calc(100vh-84px)] rounded-[24px] bg-white px-4 py-[18px] pb-5 text-[#202124] dark:bg-slate-800 dark:text-slate-100 sm:px-6" @click="clearSelection">
+		<div class="relative min-h-[calc(100vh-84px)] rounded-[12px] bg-white px-4 py-4 pb-4 text-[#202124] dark:bg-slate-800 dark:text-slate-100 sm:px-6" @click="clearSelection">
 			<div class="mb-2 flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
 				<h1 class="m-0 text-2xl font-normal text-[#202124] dark:text-slate-100">{{ t('nav.starred') }}</h1>
 				<FileListViewModeToggle v-model="isGridView" />

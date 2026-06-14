@@ -39,35 +39,6 @@ export function listFilesByPath(userId, virtualPath = '/') {
 	return buildDisplayNames(rows);
 }
 
-export function createFileMetadata(record) {
-	const payload = {
-		id: randomUUID(),
-		user_id: record.user_id,
-		virtual_path: normalizePath(record.virtual_path),
-		file_name: record.file_name,
-		is_folder: record.is_folder ? 1 : 0,
-		size: record.size,
-		mime_type: resolveMimeType(record),
-		cloud_account_id: record.cloud_account_id,
-		remote_file_id: record.remote_file_id,
-		remote_parent_id: record.remote_parent_id || null,
-		remote_created_time: record.remote_created_time || null,
-		remote_modified_time: record.remote_modified_time || null,
-	};
-
-	db.prepare(`
-    INSERT INTO file_metadata (
-			id, user_id, virtual_path, file_name, is_folder, size, mime_type,
-			cloud_account_id, remote_file_id, remote_parent_id, remote_created_time, remote_modified_time
-    ) VALUES (
-			@id, @user_id, @virtual_path, @file_name, @is_folder, @size, @mime_type,
-			@cloud_account_id, @remote_file_id, @remote_parent_id, @remote_created_time, @remote_modified_time
-    )
-  `).run(payload);
-
-	return getFileById(payload.user_id, payload.id);
-}
-
 export function getFileById(userId, id) {
 	const row = db
 		.prepare(`
@@ -96,8 +67,29 @@ export function getFileByRemoteId(userId, cloudAccountId, remoteFileId) {
 	return buildDisplayNames([row])[0];
 }
 
-export function listAllFiles(userId) {
-	return db.prepare('SELECT * FROM file_metadata WHERE user_id = ?').all(userId);
+/**
+ * Batch-load every locally synced file for an account, keyed by its
+ * remote_file_id. Used to resolve "shared with me" items against local
+ * metadata in O(1) per item instead of issuing one query per remote item
+ * (avoids an N+1 query pattern). Backed by idx_file_user_account_id.
+ */
+export function getLocalFilesByRemoteId(userId, cloudAccountId) {
+	const rows = db
+		.prepare(`
+      SELECT fm.*, ca.provider, ca.email
+      FROM file_metadata fm
+      INNER JOIN cloud_accounts ca ON ca.id = fm.cloud_account_id
+			WHERE fm.user_id = ? AND fm.cloud_account_id = ? AND ca.status = 'active'
+    `)
+		.all(userId, cloudAccountId);
+
+	const byRemoteId = new Map();
+	for (const file of buildDisplayNames(rows)) {
+		if (file.remote_file_id != null && !byRemoteId.has(file.remote_file_id)) {
+			byRemoteId.set(file.remote_file_id, file);
+		}
+	}
+	return byRemoteId;
 }
 
 export function listStarredFiles(userId) {
@@ -150,22 +142,42 @@ export function setFileStarred(userId, fileId, isStarred) {
 	`).run(isStarred ? 1 : 0, userId, fileId);
 }
 
-export function replaceFilesForAccount(userId, cloudAccountId, records) {
-	const normalizedRecords = records.map((record) => ({
-		id: record.id || randomUUID(),
-		user_id: userId,
-		virtual_path: normalizePath(record.virtual_path),
-		file_name: record.file_name,
-		is_folder: record.is_folder ? 1 : 0,
-		is_starred: record.is_starred ? 1 : 0,
-		size: Number(record.size || 0),
-		mime_type: resolveMimeType(record),
-		cloud_account_id: cloudAccountId,
-		remote_file_id: record.remote_file_id,
-		remote_parent_id: record.remote_parent_id || null,
-		remote_created_time: record.remote_created_time || null,
-		remote_modified_time: record.remote_modified_time || null,
-	}));
+export function replaceFilesForAccount(userId, cloudAccountId, records, options = {}) {
+	const { preserveStarred = false } = options;
+
+	const existingStarredByRemoteId = preserveStarred
+		? new Map(
+			db
+				.prepare(
+					'SELECT remote_file_id, is_starred FROM file_metadata WHERE user_id = ? AND cloud_account_id = ?',
+				)
+				.all(userId, cloudAccountId)
+				.map((row) => [row.remote_file_id, row.is_starred ? 1 : 0]),
+		)
+		: null;
+
+	const normalizedRecords = records.map((record) => {
+		const incomingStarred = record.is_starred ? 1 : 0;
+		const preservedStarred = preserveStarred
+			? incomingStarred || existingStarredByRemoteId.get(record.remote_file_id) || 0
+			: incomingStarred;
+
+		return {
+			id: record.id || randomUUID(),
+			user_id: userId,
+			virtual_path: normalizePath(record.virtual_path),
+			file_name: record.file_name,
+			is_folder: record.is_folder ? 1 : 0,
+			is_starred: preservedStarred,
+			size: Number(record.size || 0),
+			mime_type: resolveMimeType(record),
+			cloud_account_id: cloudAccountId,
+			remote_file_id: record.remote_file_id,
+			remote_parent_id: record.remote_parent_id || null,
+			remote_created_time: record.remote_created_time || null,
+			remote_modified_time: record.remote_modified_time || null,
+		};
+	});
 
 	const replace = db.transaction(() => {
 		db.prepare('DELETE FROM file_metadata WHERE user_id = ? AND cloud_account_id = ?').run(userId, cloudAccountId);
@@ -226,13 +238,143 @@ export function upsertFileMetadata(record) {
 	});
 }
 
-export function listDirectoryTree(userId) {
-	return db
-		.prepare(`
-      SELECT id, virtual_path, file_name, is_folder, cloud_account_id
-      FROM file_metadata
-      WHERE user_id = ?
-      ORDER BY virtual_path, is_folder DESC, file_name
-    `)
-		.all(userId);
+/**
+ * Compute the full virtual path of a folder item (its own path, including a
+ * trailing slash). For a folder named "b" living under "/a/", this returns
+ * "/a/b/". Used to remap or remove descendants when a folder is renamed or
+ * deleted without re-walking the whole provider account.
+ */
+function folderSelfPath(virtualPath, fileName) {
+	const parent = normalizePath(virtualPath);
+	return normalizePath(`${parent === '/' ? '' : parent}${fileName}`);
+}
+
+/**
+ * Insert (or update on conflict) a single mirrored file row keyed by its
+ * provider remote id. This replaces the previous "delete every row for the
+ * account and re-insert the entire structure" behavior for upload and
+ * create-folder, so a single mutation no longer re-walks the whole account.
+ * The existing starred flag is preserved on conflict.
+ */
+export function upsertFileByRemoteId(record) {
+	if (!record.remote_file_id) {
+		throw new Error('upsertFileByRemoteId: remote_file_id is required');
+	}
+
+	const payload = {
+		id: record.id || randomUUID(),
+		user_id: record.user_id,
+		virtual_path: normalizePath(record.virtual_path),
+		file_name: record.file_name,
+		is_folder: record.is_folder ? 1 : 0,
+		is_starred: record.is_starred ? 1 : 0,
+		size: Number(record.size || 0),
+		mime_type: resolveMimeType(record),
+		cloud_account_id: record.cloud_account_id,
+		remote_file_id: record.remote_file_id,
+		remote_parent_id: record.remote_parent_id || null,
+		remote_created_time: record.remote_created_time || null,
+		remote_modified_time: record.remote_modified_time || null,
+	};
+
+	db.prepare(`
+    INSERT INTO file_metadata (
+			id, user_id, virtual_path, file_name, is_folder, is_starred, size, mime_type,
+			cloud_account_id, remote_file_id, remote_parent_id, remote_created_time, remote_modified_time
+    ) VALUES (
+			@id, @user_id, @virtual_path, @file_name, @is_folder, @is_starred, @size, @mime_type,
+			@cloud_account_id, @remote_file_id, @remote_parent_id, @remote_created_time, @remote_modified_time
+    )
+    ON CONFLICT(cloud_account_id, remote_file_id) DO UPDATE SET
+      virtual_path = excluded.virtual_path,
+      file_name = excluded.file_name,
+      is_folder = excluded.is_folder,
+      size = excluded.size,
+      mime_type = excluded.mime_type,
+      remote_parent_id = excluded.remote_parent_id,
+      remote_modified_time = excluded.remote_modified_time,
+      updated_at = CURRENT_TIMESTAMP
+  `).run(payload);
+
+	return getFileByRemoteId(payload.user_id, payload.cloud_account_id, payload.remote_file_id);
+}
+
+/**
+ * Rename a single mirrored item in place. When the item is a folder, every
+ * descendant's virtual_path prefix is rewritten in the same transaction so the
+ * local tree stays consistent without a full account resync. Exact-prefix
+ * matching via substr avoids the wildcard pitfalls of LIKE for names that
+ * contain "%" or "_". No-ops when the row is not mirrored locally (e.g. a
+ * "shared with me" item, which is served live from the provider).
+ */
+export function renameFileMetadata(userId, id, nextName) {
+	const row = db.prepare('SELECT * FROM file_metadata WHERE user_id = ? AND id = ?').get(userId, id);
+	if (!row) return;
+
+	const rename = db.transaction(() => {
+		if (row.is_folder) {
+			const oldPath = folderSelfPath(row.virtual_path, row.file_name);
+			const newPath = folderSelfPath(row.virtual_path, nextName);
+			db.prepare(`
+				UPDATE file_metadata
+				SET virtual_path = ? || substr(virtual_path, length(?) + 1),
+					updated_at = CURRENT_TIMESTAMP
+				WHERE user_id = ?
+					AND cloud_account_id = ?
+					AND substr(virtual_path, 1, length(?)) = ?
+			`).run(newPath, oldPath, userId, row.cloud_account_id, oldPath, oldPath);
+		}
+
+		db.prepare(`
+			UPDATE file_metadata
+			SET file_name = ?, updated_at = CURRENT_TIMESTAMP
+			WHERE user_id = ? AND id = ?
+		`).run(nextName, userId, id);
+	});
+
+	rename();
+}
+
+/**
+ * Delete a single mirrored item. For folders, all descendant rows (matched by
+ * exact virtual_path prefix) are removed in the same transaction. Returns the
+ * freed byte total and the owning account id so callers can adjust cached
+ * usage without a full provider storage round-trip. No-ops for items that are
+ * not mirrored locally.
+ */
+export function deleteFileMetadataById(userId, id) {
+	const row = db.prepare('SELECT * FROM file_metadata WHERE user_id = ? AND id = ?').get(userId, id);
+	if (!row) {
+		return { deletedSize: 0, cloudAccountId: null };
+	}
+
+	const remove = db.transaction(() => {
+		let deletedSize = Number(row.size || 0);
+
+		if (row.is_folder) {
+			const selfPath = folderSelfPath(row.virtual_path, row.file_name);
+			const descendantSize = db
+				.prepare(`
+					SELECT COALESCE(SUM(size), 0) AS total
+					FROM file_metadata
+					WHERE user_id = ?
+						AND cloud_account_id = ?
+						AND substr(virtual_path, 1, length(?)) = ?
+				`)
+				.get(userId, row.cloud_account_id, selfPath, selfPath);
+			deletedSize += Number(descendantSize.total || 0);
+
+			db.prepare(`
+				DELETE FROM file_metadata
+				WHERE user_id = ?
+					AND cloud_account_id = ?
+					AND substr(virtual_path, 1, length(?)) = ?
+			`).run(userId, row.cloud_account_id, selfPath, selfPath);
+		}
+
+		db.prepare('DELETE FROM file_metadata WHERE user_id = ? AND id = ?').run(userId, id);
+		return deletedSize;
+	});
+
+	return { deletedSize: remove(), cloudAccountId: row.cloud_account_id };
 }

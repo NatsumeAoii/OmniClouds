@@ -235,7 +235,8 @@ export const useUploadQueueStore = defineStore('uploadQueue', {
 						status: 'cancelled',
 						error: null,
 					});
-					return;
+					// Cancelling one download must not stop the rest of the batch.
+					continue;
 				}
 
 				this.updateUpload(queueItem.id, {

@@ -542,7 +542,7 @@ onMounted(async () => {
 
 <template>
 	<DriveShell current-section="storage">
-		<div class="min-h-[calc(100vh-84px)] rounded-[24px] bg-white px-4 py-[18px] pb-6 text-[#202124] dark:bg-slate-800 dark:text-slate-100 sm:px-6">
+		<div class="min-h-[calc(100vh-84px)] rounded-[12px] bg-white px-4 py-4 pb-5 text-[#202124] dark:bg-slate-800 dark:text-slate-100 sm:px-6">
 			<div class="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 				<div>
 					<h1 class="text-2xl font-normal">{{ t('storage.title') }}</h1>
@@ -562,7 +562,7 @@ onMounted(async () => {
 							<IconChevronDown :size="16" :stroke="2" class="transition" :class="isConnectMenuOpen ? 'rotate-180' : ''" />
 						</button>
 
-						<div v-if="isConnectMenuOpen" class="absolute right-0 top-[calc(100%+10px)] z-20 min-w-[240px] overflow-hidden rounded-[20px] border border-[#e0e3e7] bg-white py-2 shadow-[0_18px_44px_rgba(32,33,36,0.18)] dark:border-slate-700 dark:bg-slate-900">
+						<div v-if="isConnectMenuOpen" class="absolute right-0 top-[calc(100%+10px)] z-20 min-w-[240px] overflow-hidden rounded-[10px] border border-[#e0e3e7] bg-white py-2 shadow-[0_18px_44px_rgba(32,33,36,0.18)] dark:border-slate-700 dark:bg-slate-900">
 							<button v-for="provider in providerConnectOptions" :key="provider.key" type="button" class="flex w-full items-center gap-3 px-4 py-3 text-left text-sm text-[#202124] hover:bg-[#f8fafd] disabled:opacity-60 dark:text-slate-100 dark:hover:bg-slate-800" :disabled="Boolean(connectingProvider)" @click="provider.action">
 								<img :src="provider.icon" :alt="provider.label" class="size-[18px] shrink-0 object-contain" />
 								<span>{{ connectingProvider === provider.key ? provider.busyLabel : provider.label }}</span>
@@ -587,7 +587,7 @@ onMounted(async () => {
 				</button>
 			</div>
 
-			<section v-show="activeTab === 'overview'" class="mb-6 rounded-[28px] border border-[#e0e3e7] bg-white p-5 dark:border-slate-700 dark:bg-slate-900/70">
+			<section v-show="activeTab === 'overview'" class="mb-6 rounded-[14px] border border-[#e0e3e7] bg-white p-4 dark:border-slate-700 dark:bg-slate-900/70">
 				<div class="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
 					<div class="flex items-center gap-3">
 						<div class="grid size-12 place-items-center rounded-2xl bg-[#e8f0fe] text-[#1a73e8] dark:bg-slate-800">
@@ -599,7 +599,7 @@ onMounted(async () => {
 						</div>
 					</div>
 
-					<div class="min-w-[220px] rounded-[22px] bg-[#f8fafd] px-4 py-3 text-sm dark:bg-slate-800/80">
+					<div class="min-w-[220px] rounded-[12px] bg-[#f8fafd] px-4 py-3 text-sm dark:bg-slate-800/80">
 						<div class="flex items-center justify-between gap-3">
 							<span class="text-[#5f6368] dark:text-slate-400">{{ t('storage.usedSpace') }}</span>
 							<strong>{{ usedFormatted }}</strong>
@@ -618,7 +618,7 @@ onMounted(async () => {
 				</div>
 
 				<div class="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-					<div v-for="account in accountLegends" :key="account.id" class="min-w-0 rounded-[22px] border border-[#e3e8ee] bg-[#f8fafd] p-4 dark:border-slate-700 dark:bg-slate-800/85">
+					<div v-for="account in accountLegends" :key="account.id" class="min-w-0 rounded-[12px] border border-[#e3e8ee] bg-[#f8fafd] p-4 dark:border-slate-700 dark:bg-slate-800/85">
 						<div class="flex items-start justify-between gap-3">
 							<div class="flex min-w-0 items-start gap-3">
 								<div class="flex size-10 shrink-0 items-center justify-center rounded-2xl bg-white dark:bg-slate-900/70">
@@ -668,7 +668,7 @@ onMounted(async () => {
 				</div>
 			</section>
 
-			<section v-show="activeTab === 'allocation'" class="mb-6 rounded-[28px] border border-[#e0e3e7] bg-white p-5 dark:border-slate-700 dark:bg-slate-900/70">
+			<section v-show="activeTab === 'allocation'" class="mb-6 rounded-[14px] border border-[#e0e3e7] bg-white p-4 dark:border-slate-700 dark:bg-slate-900/70">
 				<div class="flex flex-col gap-1">
 					<h2 class="text-lg font-medium">{{ t('allocation.title') }}</h2>
 					<p class="text-sm text-[#5f6368] dark:text-slate-400">{{ t('allocation.subtitle') }}</p>
@@ -731,7 +731,7 @@ onMounted(async () => {
 			<p v-if="actionError || error" class="mb-4 rounded-2xl bg-[#fce8e6] px-4 py-3 text-sm text-[#c5221f] dark:bg-red-950/40 dark:text-red-300">{{ actionError || error }}</p>
 			<p v-if="actionSuccess" class="mb-4 rounded-2xl bg-[#e6f4ea] px-4 py-3 text-sm text-[#188038] dark:bg-emerald-950/40 dark:text-emerald-300">{{ actionSuccess }}</p>
 
-			<div v-if="!accounts.length && !isLoading" class="rounded-[24px] border border-dashed border-[#dadce0] bg-white p-6 text-center text-[#5f6368] dark:border-slate-700 dark:bg-slate-900/40 dark:text-slate-400">
+			<div v-if="!accounts.length && !isLoading" class="rounded-[12px] border border-dashed border-[#dadce0] bg-white p-6 text-center text-[#5f6368] dark:border-slate-700 dark:bg-slate-900/40 dark:text-slate-400">
 				{{ t('storage.noAccounts') }}
 
 			</div>

@@ -44,6 +44,7 @@ export class S3Adapter extends BaseCloudAdapter {
 		super(account);
 		this.clientCache = null;
 		this.bucketCache = null;
+		this.objectsCache = null;
 	}
 
 	readCredentials() {
@@ -75,6 +76,10 @@ export class S3Adapter extends BaseCloudAdapter {
 	}
 
 	async listAllObjects() {
+		if (this.objectsCache) {
+			return this.objectsCache;
+		}
+
 		const { client, bucket } = this.getClient();
 		const objects = [];
 		let continuationToken;
@@ -90,6 +95,7 @@ export class S3Adapter extends BaseCloudAdapter {
 			continuationToken = response.IsTruncated ? response.NextContinuationToken : undefined;
 		} while (continuationToken);
 
+		this.objectsCache = objects;
 		return objects;
 	}
 

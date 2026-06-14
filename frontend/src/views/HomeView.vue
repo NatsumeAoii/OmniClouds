@@ -29,8 +29,8 @@ onMounted(loadPage);
 
 <template>
 	<DriveShell current-section="home">
-		<div class="min-h-[calc(100vh-84px)] rounded-[24px] bg-white px-4 py-6 text-[#202124] dark:bg-slate-800 dark:text-slate-100 sm:px-6">
-			<section class="mb-7 grid gap-5 rounded-[20px] bg-gradient-to-b from-[#e8f0fe] to-[#f1f6ff] p-7 dark:from-slate-900 dark:to-slate-800 sm:grid-cols-[minmax(0,1.6fr)_280px]">
+		<div class="min-h-[calc(100vh-84px)] rounded-[12px] bg-white px-4 py-4 text-[#202124] dark:bg-slate-800 dark:text-slate-100 sm:px-6">
+			<section class="mb-5 grid gap-4 rounded-[10px] bg-gradient-to-b from-[#e8f0fe] to-[#f1f6ff] p-7 dark:from-slate-900 dark:to-slate-800 sm:grid-cols-[minmax(0,1.6fr)_280px]">
 				<div>
 					<p class="mb-2 text-xs font-bold uppercase tracking-[0.08em] text-[#1a73e8]">{{ t('home.subtitle') }}</p>
 					<h2 class="mb-2 text-[28px] font-medium text-[#202124] dark:text-slate-100">{{ t('home.heroTitle') }}</h2>
@@ -48,7 +48,7 @@ onMounted(loadPage);
 					</div>
 				</div>
 
-				<div class="flex flex-col items-center justify-center gap-3.5 rounded-[20px] border border-[#e0e3e7] bg-white p-5 text-center dark:border-slate-700 dark:bg-slate-800/80">
+				<div class="flex flex-col items-center justify-center gap-3.5 rounded-[10px] border border-[#e0e3e7] bg-white p-5 text-center dark:border-slate-700 dark:bg-slate-800/80">
 					<div class="grid size-[116px] place-items-center rounded-full" :style="{ background: `conic-gradient(#1a73e8 0 ${storagePercentRounded}%, #eaf1fb ${storagePercentRounded}% 100%)` }">
 						<div class="grid size-[82px] place-items-center rounded-full bg-white font-bold text-[#1a73e8] dark:bg-slate-900">{{ storagePercentRounded }}%</div>
 					</div>
@@ -66,14 +66,14 @@ onMounted(loadPage);
 				</div>
 
 				<div class="overflow-hidden rounded-2xl border border-[#e0e3e7] dark:border-slate-700">
-					<div class="grid min-h-11 grid-cols-[minmax(220px,2fr)_1.1fr_1fr_140px] items-center gap-3 bg-[#f8fafd] px-[18px] text-[13px] text-[#5f6368] dark:bg-slate-900/70 dark:text-slate-400 max-md:grid-cols-[minmax(180px,1.8fr)_1fr_1fr]">
+					<div class="grid min-h-9 grid-cols-[minmax(220px,2fr)_1.1fr_1fr_140px] items-center gap-3 bg-[#f8fafd] px-4 text-[13px] text-[#5f6368] dark:bg-slate-900/70 dark:text-slate-400 max-md:grid-cols-[minmax(180px,1.8fr)_1fr_1fr]">
 						<span>{{ t('home.fileName') }}</span>
 						<span>{{ t('home.fileOwner') }}</span>
 						<span>{{ t('home.fileModified') }}</span>
 						<span class="max-md:hidden">{{ t('home.fileSize') }}</span>
 					</div>
 
-					<div v-for="file in quickFiles" :key="file.id" class="grid min-h-[52px] grid-cols-[minmax(0,2fr)_minmax(0,1.1fr)_minmax(0,1fr)_140px] items-center gap-3 border-t border-[#eceff1] px-[18px] dark:border-slate-700 max-md:grid-cols-[minmax(0,1.8fr)_minmax(0,1fr)_minmax(0,1fr)]">
+					<div v-for="file in quickFiles" :key="file.id" class="grid min-h-10 grid-cols-[minmax(0,2fr)_minmax(0,1.1fr)_minmax(0,1fr)_140px] items-center gap-3 border-t border-[#eceff1] px-4 dark:border-slate-700 max-md:grid-cols-[minmax(0,1.8fr)_minmax(0,1fr)_minmax(0,1fr)]">
 						<span class="flex min-w-0 items-center gap-2.5 text-[#202124] dark:text-slate-100">
 							<IconFileDescription :size="18" :stroke="1.8" class="text-[#5f6368] dark:text-slate-400" />
 							<TruncateMarquee :text="file.display_name || file.file_name" />
