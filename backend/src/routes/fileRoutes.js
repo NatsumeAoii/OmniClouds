@@ -1,228 +1,39 @@
 import { Router } from 'express';
-import { listFilesByPath, getFileById, getFileByRemoteId, getLocalFilesByRemoteId, listRecentFiles, listStarredFiles, searchFiles, setFileStarred, updateFileStarredByRemoteId, renameFileMetadata, deleteFileMetadataById, upsertFileByRemoteId } from '../services/fileService.js';
-import { getAccountById, getActiveAccounts, adjustAccountUsage } from '../services/accountService.js';
+import {
+	listFilesByPath,
+	listRecentFiles,
+	listStarredFiles,
+	searchFiles,
+	setFileStarred,
+	updateFileStarredByRemoteId,
+	renameFileMetadata,
+	upsertFileByRemoteId,
+	getAccountIdForPath,
+	moveFileMetadata,
+	getLocalFilesByRemoteId,
+} from '../services/fileService.js';
+import { getAccountById } from '../services/accountService.js';
 import { createAdapter } from '../services/adapterRegistry.js';
 import { selectBestAccount } from '../services/spaceAllocator.js';
 import { syncAccount } from '../services/syncService.js';
 import { requireAppUser } from '../middleware/authMiddleware.js';
-import { contentDispositionHeader } from '../utils/httpHeaders.js';
+import { contentDispositionHeader, parseRangeHeader } from '../utils/httpHeaders.js';
+import { AppError } from '../utils/AppError.js';
+import {
+	getFileContext,
+	ensureFileContext,
+	deleteContextFile,
+} from '../services/fileContextService.js';
+import {
+	decodeSharedFileId,
+	mapSharedItem,
+	listSharedWithMeFiles,
+} from '../services/sharedFileService.js';
+import { pipeDownloadStream } from '../services/fileDownloadService.js';
 
 const router = Router();
 
 router.use(requireAppUser);
-
-/**
- * Pipe a provider download stream to the HTTP response with end-to-end failure
- * handling. Errors before the first byte are surfaced via `next` (so the
- * central error handler can produce a JSON error). Once streaming has started
- * the headers are already flushed, so a later upstream error can only be
- * handled by destroying the response. The client-disconnect handler tears down
- * the upstream provider stream to avoid leaking that connection.
- */
-function pipeDownloadStream(stream, res, next) {
-	let streamingStarted = false;
-
-	const destroyStream = () => {
-		if (typeof stream.destroy === 'function') {
-			stream.destroy();
-		}
-	};
-
-	stream.on('data', () => {
-		streamingStarted = true;
-	});
-
-	stream.on('error', (error) => {
-		if (streamingStarted || res.headersSent) {
-			// Headers are already flushed, so we cannot send a JSON error. Log the
-			// upstream cause for diagnostics and abort the response socket. We do
-			// not pass the error to res.destroy to avoid emitting an unhandled
-			// 'error' event on the response.
-			console.error('Download stream failed after streaming started:', error?.message || error);
-			destroyStream();
-			res.destroy();
-			return;
-		}
-		next(error);
-	});
-
-	res.on('close', () => {
-		if (!res.writableEnded) {
-			destroyStream();
-		}
-	});
-
-	stream.pipe(res);
-}
-
-function encodeSharedFileId(accountId, remoteFileId) {
-	return `shared:${accountId}:${Buffer.from(String(remoteFileId)).toString('base64url')}`;
-}
-
-function mapSharedItem(userId, account, item, localFile = getFileByRemoteId(userId, account.id, item.remote_file_id)) {
-	return {
-		...(localFile || {}),
-		...item,
-		id: encodeSharedFileId(account.id, item.remote_file_id),
-		cloud_account_id: account.id,
-		provider: localFile?.provider || account.provider,
-		email: item.owner_email || localFile?.email || account.email,
-		createdTime: item.createdTime,
-		modifiedTime: item.modifiedTime,
-		capabilities: {
-			starred: Boolean(item.capabilities?.starred ?? localFile?.capabilities?.starred ?? account.provider === 'google_drive'),
-			rename: Boolean(item.capabilities?.rename ?? localFile?.capabilities?.rename ?? false),
-			delete: Boolean(item.capabilities?.delete ?? localFile?.capabilities?.delete ?? false),
-		},
-	};
-}
-
-function decodeSharedFileId(fileId) {
-	if (!fileId?.startsWith('shared:')) return null;
-	const [, accountId, encodedRemoteFileId] = fileId.split(':');
-	if (!accountId || !encodedRemoteFileId) return null;
-	return {
-		accountId,
-		remoteFileId: Buffer.from(encodedRemoteFileId, 'base64url').toString('utf8'),
-	};
-}
-
-async function getSharedFileContext(userId, fileId) {
-	const parsed = decodeSharedFileId(fileId);
-	if (!parsed) {
-		return { file: null, account: null, adapter: null };
-	}
-
-	const account = getAccountById(userId, parsed.accountId);
-	if (!account) {
-		return { file: null, account: null, adapter: null };
-	}
-
-	const adapter = createAdapter(account);
-	const sharedItems = await adapter.listSharedWithMe();
-	let file = sharedItems.find((item) => item.remote_file_id === parsed.remoteFileId);
-	if (!file) {
-		try {
-			const details = await adapter.getFileDetails({ remote_file_id: parsed.remoteFileId });
-			if (details?.remote_file_id) {
-				file = {
-					file_name: details.file_name || details.name,
-					is_folder: Boolean(details.is_folder),
-					is_starred: 0,
-					size: Number(details.size || 0),
-					mime_type: details.mime_type || details.mimeType || null,
-					remote_file_id: details.remote_file_id,
-					remote_parent_id: details.remote_parent_id || null,
-					remote_drive_id: details.remote_drive_id || null,
-					createdTime: details.createdTime || null,
-					modifiedTime: details.modifiedTime || null,
-					owner_name: details.owner_name || null,
-					owner_email: details.owner_email || account.email,
-				};
-			}
-		} catch {
-			file = null;
-		}
-	}
-	if (!file) {
-		return { file: null, account, adapter };
-	}
-
-	return {
-		file: {
-			...file,
-			id: fileId,
-			cloud_account_id: account.id,
-			provider: account.provider,
-			email: file.owner_email || account.email,
-			capabilities: {
-				starred: Boolean(file.capabilities?.starred ?? account.provider === 'google_drive'),
-				rename: Boolean(file.capabilities?.rename ?? false),
-				delete: Boolean(file.capabilities?.delete ?? false),
-			},
-		},
-		account,
-		adapter,
-	};
-}
-
-async function getFileContext(userId, fileId) {
-	const file = getFileById(userId, fileId);
-	if (!file) {
-		return getSharedFileContext(userId, fileId);
-	}
-
-	const account = getAccountById(userId, file.cloud_account_id);
-	if (!account) {
-		return { file, account: null, adapter: null };
-	}
-
-	return {
-		file,
-		account,
-		adapter: createAdapter(account),
-	};
-}
-
-function ensureFileContext(context, res) {
-	if (!context.file) {
-		res.status(404).json({ error: 'File not found' });
-		return false;
-	}
-
-	if (!context.account || context.account.status !== 'active' || !context.adapter) {
-		res.status(409).json({ error: 'The file account is no longer connected' });
-		return false;
-	}
-
-	return true;
-}
-
-async function deleteContextFile(userId, context, options = {}) {
-	const { adjustUsage = true } = options;
-	await context.adapter.deleteFile(context.file);
-
-	// Surgically remove the item (and any descendants for folders) from the
-	// local mirror instead of triggering a full account re-walk. Shared items
-	// are not mirrored locally, so this no-ops for them.
-	const { deletedSize, cloudAccountId } = deleteFileMetadataById(userId, context.file.id);
-
-	if (adjustUsage && cloudAccountId && deletedSize) {
-		adjustAccountUsage(userId, cloudAccountId, -deletedSize);
-	}
-
-	return { deletedSize, cloudAccountId };
-}
-
-async function listSharedWithMeFiles(userId) {
-	const accounts = getActiveAccounts(userId);
-	const settled = await Promise.allSettled(accounts.map(async (account) => {
-		const adapter = createAdapter(account);
-		const items = await adapter.listSharedWithMe();
-
-		const localByRemoteId = getLocalFilesByRemoteId(userId, account.id);
-		return items
-			.map((item) => mapSharedItem(userId, account, item, localByRemoteId.get(item.remote_file_id) || null))
-			.filter((item) => Boolean(item.remote_file_id));
-	}));
-
-	const seenIds = new Set();
-	return settled
-		.filter((result) => result.status === 'fulfilled')
-		.flatMap((result) => result.value)
-		.filter((item) => Boolean(item.remote_file_id))
-		.filter((item) => {
-			if (seenIds.has(item.id)) return false;
-			seenIds.add(item.id);
-			return true;
-		})
-		.sort((left, right) => {
-			const leftTime = new Date(left.modifiedTime || left.createdTime || 0).getTime();
-			const rightTime = new Date(right.modifiedTime || right.createdTime || 0).getTime();
-			if (leftTime !== rightTime) return rightTime - leftTime;
-			return (left.file_name || '').localeCompare(right.file_name || '', 'id');
-		});
-}
 
 router.get('/files', async (req, res, next) => {
 	try {
@@ -233,7 +44,7 @@ router.get('/files', async (req, res, next) => {
 			: req.query.recent === '1'
 				? listRecentFiles(req.user.id)
 				: req.query.shared === '1'
-					? await listSharedWithMeFiles(req.user.id)
+					? await listSharedWithMeFiles(req.user.id, { forceRefresh: req.query.refresh === '1' })
 					: listFilesByPath(req.user.id, req.query.path || '/');
 		res.json({ data: files });
 	} catch (error) {
@@ -244,18 +55,22 @@ router.get('/files', async (req, res, next) => {
 router.get('/files/:id/shared-children', async (req, res, next) => {
 	try {
 		const context = await getFileContext(req.user.id, req.params.id);
-		if (!ensureFileContext(context, res)) {
+		if (!ensureFileContext(context)) {
 			return;
 		}
 
 		if (!context.file.is_folder) {
-			return res.status(400).json({ error: 'Only folders can be opened' });
+			throw new AppError('Only folders can be opened', 400, 'NOT_A_FOLDER');
 		}
 
 		const items = await context.adapter.listSharedFolderChildren(context.file);
 		const localByRemoteId = getLocalFilesByRemoteId(req.user.id, context.account.id);
 		return res.json({
-			data: items.map((item) => mapSharedItem(req.user.id, context.account, item, localByRemoteId.get(item.remote_file_id) || null)).filter((item) => Boolean(item.remote_file_id)),
+			data: items
+				.map((item) =>
+					mapSharedItem(req.user.id, context.account, item, localByRemoteId.get(item.remote_file_id) || null),
+				)
+				.filter((item) => Boolean(item.remote_file_id)),
 		});
 	} catch (error) {
 		next(error);
@@ -265,7 +80,7 @@ router.get('/files/:id/shared-children', async (req, res, next) => {
 router.patch('/files/:id/star', async (req, res, next) => {
 	try {
 		const context = await getFileContext(req.user.id, req.params.id);
-		if (!ensureFileContext(context, res)) {
+		if (!ensureFileContext(context)) {
 			return;
 		}
 
@@ -293,13 +108,20 @@ router.post('/files/bulk/delete', async (req, res, next) => {
 	try {
 		const ids = Array.isArray(req.body?.ids) ? [...new Set(req.body.ids.filter(Boolean))] : [];
 		if (!ids.length) {
-			return res.status(400).json({ error: 'At least one file id is required' });
+			throw new AppError('At least one file id is required', 400, 'NO_FILE_IDS');
 		}
 
-		const contexts = await Promise.all(ids.map(async (id) => ({ id, ...await getFileContext(req.user.id, id) })));
-		const invalid = contexts.find((context) => !context.file || !context.account || context.account.status !== 'active' || !context.adapter);
+		const contexts = await Promise.all(
+			ids.map(async (id) => ({ id, ...(await getFileContext(req.user.id, id)) })),
+		);
+		const invalid = contexts.find(
+			(context) =>
+				!context.file || !context.account || context.account.status !== 'active' || !context.adapter,
+		);
 		if (invalid) {
-			return res.status(invalid.file ? 409 : 404).json({ error: invalid.file ? 'One or more file accounts are no longer connected' : 'One or more files were not found' });
+			throw invalid.file
+				? new AppError('One or more file accounts are no longer connected', 409, 'ACCOUNT_DISCONNECTED')
+				: new AppError('One or more files were not found', 404, 'FILE_NOT_FOUND');
 		}
 
 		for (const context of contexts) {
@@ -315,7 +137,7 @@ router.post('/files/bulk/delete', async (req, res, next) => {
 router.get('/files/:id', async (req, res, next) => {
 	try {
 		const context = await getFileContext(req.user.id, req.params.id);
-		if (!ensureFileContext(context, res)) {
+		if (!ensureFileContext(context)) {
 			return;
 		}
 
@@ -334,15 +156,33 @@ router.get('/files/:id', async (req, res, next) => {
 router.get('/files/:id/download', async (req, res, next) => {
 	try {
 		const context = await getFileContext(req.user.id, req.params.id);
-		if (!ensureFileContext(context, res)) {
+		if (!ensureFileContext(context)) {
 			return;
 		}
-		const stream = await context.adapter.getDownloadStream(context.file);
+
+		const totalSize = !context.file.is_folder ? Number(context.file.size || 0) : 0;
+		const range = parseRangeHeader(req.headers.range, totalSize);
+
+		if (range?.unsatisfiable) {
+			res.setHeader('Content-Range', `bytes */${totalSize}`);
+			throw new AppError('Requested range not satisfiable', 416, 'RANGE_NOT_SATISFIABLE');
+		}
+
+		const stream = await context.adapter.getDownloadStream(context.file, range ? { range } : {});
 
 		res.setHeader('Content-Disposition', contentDispositionHeader('attachment', context.file.file_name));
 		res.setHeader('Content-Type', context.file.mime_type || 'application/octet-stream');
-		if (!context.file.is_folder && context.file.size) {
-			res.setHeader('Content-Length', String(context.file.size));
+		res.setHeader('X-Content-Type-Options', 'nosniff');
+		res.setHeader('Accept-Ranges', 'bytes');
+
+		if (range) {
+			// Partial content: advertise the served byte window so clients can
+			// resume/scrub. Content-Length is the slice length, not the whole file.
+			res.status(206);
+			res.setHeader('Content-Range', `bytes ${range.start}-${range.end}/${totalSize}`);
+			res.setHeader('Content-Length', String(range.length));
+		} else if (totalSize) {
+			res.setHeader('Content-Length', String(totalSize));
 		}
 		pipeDownloadStream(stream, res, next);
 	} catch (error) {
@@ -353,12 +193,12 @@ router.get('/files/:id/download', async (req, res, next) => {
 router.get('/files/:id/preview', async (req, res, next) => {
 	try {
 		const context = await getFileContext(req.user.id, req.params.id);
-		if (!ensureFileContext(context, res)) {
+		if (!ensureFileContext(context)) {
 			return;
 		}
 
 		if (context.file.is_folder) {
-			return res.status(400).json({ error: 'Folder preview is not supported' });
+			throw new AppError('Folder preview is not supported', 400, 'PREVIEW_UNSUPPORTED');
 		}
 
 		const mimeType = context.file.mime_type || 'application/octet-stream';
@@ -367,15 +207,32 @@ router.get('/files/:id/preview', async (req, res, next) => {
 			|| mimeType === 'application/json';
 
 		if (!isPreviewable) {
-			return res.status(415).json({ error: 'Preview is not supported for this file type' });
+			throw new AppError('Preview is not supported for this file type', 415, 'PREVIEW_UNSUPPORTED');
 		}
 
-		const stream = await context.adapter.getDownloadStream(context.file);
+		const totalSize = Number(context.file.size || 0);
+		const range = parseRangeHeader(req.headers.range, totalSize);
+		if (range?.unsatisfiable) {
+			res.setHeader('Content-Range', `bytes */${totalSize}`);
+			throw new AppError('Requested range not satisfiable', 416, 'RANGE_NOT_SATISFIABLE');
+		}
+
+		const stream = await context.adapter.getDownloadStream(context.file, range ? { range } : {});
 
 		res.setHeader('Content-Disposition', contentDispositionHeader('inline', context.file.file_name));
 		res.setHeader('Content-Type', mimeType);
-		if (context.file.size) {
-			res.setHeader('Content-Length', String(context.file.size));
+		// Prevent MIME sniffing and neutralize active content: previewed bytes are
+		// untrusted user/provider data served from our own origin, so an HTML/SVG
+		// file masquerading as another type must not be able to execute scripts.
+		res.setHeader('X-Content-Type-Options', 'nosniff');
+		res.setHeader('Content-Security-Policy', "default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'; sandbox");
+		res.setHeader('Accept-Ranges', 'bytes');
+		if (range) {
+			res.status(206);
+			res.setHeader('Content-Range', `bytes ${range.start}-${range.end}/${totalSize}`);
+			res.setHeader('Content-Length', String(range.length));
+		} else if (totalSize) {
+			res.setHeader('Content-Length', String(totalSize));
 		}
 
 		pipeDownloadStream(stream, res, next);
@@ -388,11 +245,11 @@ router.patch('/files/:id/rename', async (req, res, next) => {
 	try {
 		const { name } = req.body;
 		if (!name?.trim()) {
-			return res.status(400).json({ error: 'New name is required' });
+			throw new AppError('New name is required', 400, 'NAME_REQUIRED');
 		}
 
 		const context = await getFileContext(req.user.id, req.params.id);
-		if (!ensureFileContext(context, res)) {
+		if (!ensureFileContext(context)) {
 			return;
 		}
 
@@ -407,10 +264,58 @@ router.patch('/files/:id/rename', async (req, res, next) => {
 	}
 });
 
+router.patch('/files/:id/move', async (req, res, next) => {
+	try {
+		const targetPath = req.body?.target_path ?? req.body?.virtual_path;
+		if (typeof targetPath !== 'string' || !targetPath.trim()) {
+			throw new AppError('target_path is required', 400, 'TARGET_PATH_REQUIRED');
+		}
+
+		const context = await getFileContext(req.user.id, req.params.id);
+		if (!ensureFileContext(context)) {
+			return;
+		}
+
+		// Shared ("shared with me") items are served live from the provider and
+		// have no local row to move.
+		if (decodeSharedFileId(context.file.id)) {
+			throw new AppError('Shared items cannot be moved', 400, 'CANNOT_MOVE_SHARED');
+		}
+
+		const normalizedTarget = targetPath.trim();
+
+		// Cross-provider moves require a full download/re-upload pipeline and are
+		// out of scope: restrict moves to within the same account. If the target
+		// folder already belongs to a different account, reject clearly.
+		const targetAccountId = getAccountIdForPath(req.user.id, normalizedTarget);
+		if (targetAccountId && targetAccountId !== context.account.id) {
+			throw new AppError(
+				'Moving across provider accounts is not supported yet',
+				400,
+				'CROSS_PROVIDER_MOVE_UNSUPPORTED',
+			);
+		}
+
+		// No-op guard: moving into the folder it already lives in.
+		const currentPath = context.file.virtual_path || '/';
+		const destPath = normalizedTarget.endsWith('/') ? normalizedTarget : `${normalizedTarget}/`;
+		if (currentPath === destPath) {
+			return res.json({ data: { success: true, unchanged: true } });
+		}
+
+		await context.adapter.moveFile(context.file, normalizedTarget);
+		moveFileMetadata(req.user.id, context.file.id, normalizedTarget);
+
+		return res.json({ data: { success: true } });
+	} catch (error) {
+		next(error);
+	}
+});
+
 router.delete('/files/:id', async (req, res, next) => {
 	try {
 		const context = await getFileContext(req.user.id, req.params.id);
-		if (!ensureFileContext(context, res)) {
+		if (!ensureFileContext(context)) {
 			return;
 		}
 
@@ -427,11 +332,21 @@ router.post('/files/folders', async (req, res, next) => {
 		const { name, virtual_path = '/' } = req.body;
 
 		if (!name?.trim()) {
-			return res.status(400).json({ error: 'Folder name is required' });
+			throw new AppError('Folder name is required', 400, 'NAME_REQUIRED');
 		}
 
-		const { selected } = selectBestAccount(req.user.id, 0);
+		// A nested folder must live on the SAME provider account as the folder
+		// that contains it, otherwise a single virtual subtree would span multiple
+		// providers. Inherit the parent path's account when one exists; only fall
+		// back to the allocator for top-level folders (empty parent).
+		const inheritedAccountId = getAccountIdForPath(req.user.id, virtual_path);
+		const selected = inheritedAccountId
+			? { id: inheritedAccountId }
+			: selectBestAccount(req.user.id, 0).selected;
 		const account = getAccountById(req.user.id, selected.id);
+		if (!account || account.status !== 'active') {
+			throw new AppError('The destination account is no longer connected', 409, 'ACCOUNT_DISCONNECTED');
+		}
 		const adapter = createAdapter(account);
 
 		const created = await adapter.createFolder({

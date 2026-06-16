@@ -49,3 +49,74 @@ export function contentDispositionHeader(disposition, fileName) {
 
 	return header;
 }
+
+/**
+ * Parse a single-range HTTP `Range` header against a known total size.
+ *
+ * Supports the byte-range forms the browser media element and download managers
+ * actually send:
+ *   - `bytes=START-END`   explicit closed range
+ *   - `bytes=START-`      from START to end of file
+ *   - `bytes=-SUFFIX`     the last SUFFIX bytes
+ *
+ * Multi-range requests (comma-separated) are intentionally not supported; we
+ * return null so the caller falls back to a normal 200 full-body response,
+ * which is a valid choice per the spec.
+ *
+ * @param {string|undefined} rangeHeader Raw header value (e.g. "bytes=0-1023").
+ * @param {number} totalSize Total resource size in bytes (must be a positive finite number).
+ * @returns {{ start: number, end: number, length: number } | null | { unsatisfiable: true }}
+ *   - A range object when a satisfiable single range was parsed.
+ *   - `{ unsatisfiable: true }` when the range is syntactically valid but lies
+ *     outside the resource (caller should respond 416).
+ *   - `null` when there is no usable range (no header, malformed, multi-range,
+ *     or unknown total size) and the caller should serve the full body.
+ */
+export function parseRangeHeader(rangeHeader, totalSize) {
+	const size = Number(totalSize);
+	if (!rangeHeader || !Number.isFinite(size) || size <= 0) {
+		return null;
+	}
+
+	const match = /^bytes=(\d*)-(\d*)$/.exec(String(rangeHeader).trim());
+	if (!match) {
+		// Malformed or multi-range — let the caller serve the full body.
+		return null;
+	}
+
+	const startRaw = match[1];
+	const endRaw = match[2];
+
+	if (startRaw === '' && endRaw === '') {
+		return null;
+	}
+
+	let start;
+	let end;
+
+	if (startRaw === '') {
+		// Suffix range: last N bytes.
+		const suffixLength = Number(endRaw);
+		if (!Number.isFinite(suffixLength) || suffixLength <= 0) {
+			return null;
+		}
+		start = Math.max(0, size - suffixLength);
+		end = size - 1;
+	} else {
+		start = Number(startRaw);
+		end = endRaw === '' ? size - 1 : Number(endRaw);
+	}
+
+	if (!Number.isFinite(start) || !Number.isFinite(end) || start > end) {
+		return { unsatisfiable: true };
+	}
+
+	if (start >= size) {
+		return { unsatisfiable: true };
+	}
+
+	// Clamp the end to the last valid byte.
+	end = Math.min(end, size - 1);
+
+	return { start, end, length: end - start + 1 };
+}

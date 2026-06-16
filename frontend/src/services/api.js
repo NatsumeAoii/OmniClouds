@@ -19,6 +19,40 @@ function resolveUploadSocketUrl() {
 
 const WS_BASE_URL = resolveUploadSocketUrl();
 
+// Optional hook invoked when any API call returns 401 in hosted mode. The auth
+// store registers this on bootstrap so a session that expires mid-use resets
+// app state and redirects to /login, instead of surfacing scattered per-call
+// error banners. Kept as a setter (not an import) to avoid a circular
+// dependency between the api layer and the Pinia store/router.
+let unauthorizedHandler = null;
+
+export function setUnauthorizedHandler(handler) {
+	unauthorizedHandler = typeof handler === 'function' ? handler : null;
+}
+
+// Unpack the standard error envelope { data: null, error: { code, message }, meta }.
+// Falls back gracefully to a legacy string `error` or a generic message, and
+// preserves the machine-readable `code` and correlation `requestId` on the
+// thrown Error for callers that want to branch on them.
+function toApiError(payload, status) {
+	const envelope = payload?.error;
+	let message = 'API request failed';
+	let code = null;
+
+	if (envelope && typeof envelope === 'object') {
+		message = envelope.message || message;
+		code = envelope.code || null;
+	} else if (typeof envelope === 'string') {
+		message = envelope;
+	}
+
+	const error = new Error(message);
+	error.status = status;
+	error.code = code;
+	error.requestId = payload?.meta?.requestId || null;
+	return error;
+}
+
 async function request(path, options = {}) {
 	const response = await fetch(`${API_BASE_URL}${path}`, {
 		credentials: 'include',
@@ -30,9 +64,14 @@ async function request(path, options = {}) {
 	});
 
 	if (!response.ok) {
-		const payload = await response.json().catch(() => ({ error: 'Unknown API error' }));
-		const error = new Error(payload.error || 'API request failed');
-		error.status = response.status;
+		const payload = await response.json().catch(() => null);
+		const error = toApiError(payload, response.status);
+		// A 401 means the session is gone/expired. Notify the registered handler
+		// once so the app can reset auth and route to login centrally, rather than
+		// every caller having to special-case it.
+		if (response.status === 401 && unauthorizedHandler) {
+			unauthorizedHandler();
+		}
 		throw error;
 	}
 
@@ -58,6 +97,18 @@ export const authApi = {
 	logout() {
 		return request('/auth/logout', {
 			method: 'POST',
+		});
+	},
+	changePassword(payload) {
+		return request('/auth/change-password', {
+			method: 'POST',
+			body: JSON.stringify(payload),
+		});
+	},
+	deleteAccount(payload) {
+		return request('/auth/delete-account', {
+			method: 'POST',
+			body: JSON.stringify(payload),
 		});
 	},
 };
@@ -108,6 +159,12 @@ export const api = {
 		return request(`/files/${fileId}/rename`, {
 			method: 'PATCH',
 			body: JSON.stringify(payload),
+		});
+	},
+	moveFile(fileId, targetPath) {
+		return request(`/files/${fileId}/move`, {
+			method: 'PATCH',
+			body: JSON.stringify({ target_path: targetPath }),
 		});
 	},
 	toggleStar(fileId, isStarred = true) {
@@ -180,6 +237,9 @@ export const api = {
 	getHealth() {
 		return request('/health');
 	},
+	getSyncStatus() {
+		return request('/health/sync');
+	},
 	runSync() {
 		return request('/sync/run', {
 			method: 'POST',
@@ -199,13 +259,14 @@ export const api = {
 		const response = await fetch(`${API_BASE_URL}/uploads/${uploadId}/stream`, {
 			method: 'POST',
 			credentials: 'include',
+			headers: options.token ? { 'X-Upload-Token': options.token } : {},
 			body: formData,
 			signal: options.signal,
 		});
 
 		if (!response.ok) {
-			const payload = await response.json().catch(() => ({ error: 'Upload failed' }));
-			throw new Error(payload.error || 'Upload failed');
+			const payload = await response.json().catch(() => null);
+			throw toApiError(payload, response.status);
 		}
 
 		return response.json();

@@ -39,6 +39,16 @@ function handleDblClick(event) {
 function handleContextMenu(event) {
   emit("contextmenu", event);
 }
+
+// Keyboard operability: Enter/Space opens the item (same as double-click) and
+// the row is focusable. This makes the list usable without a mouse, which the
+// click/dblclick-only div previously prevented entirely.
+function handleKeydown(event) {
+  if (event.key === "Enter" || event.key === " ") {
+    event.preventDefault();
+    emit("open", event);
+  }
+}
 </script>
 
 <template>
@@ -52,8 +62,12 @@ function handleContextMenu(event) {
           : 'hover:bg-black/[0.02] dark:hover:bg-white/6'
     "
     :data-file-id="item.id"
+    role="button"
+    tabindex="0"
+    :aria-label="displayName"
     @click="handleClick"
     @dblclick="handleDblClick"
+    @keydown="handleKeydown"
     @contextmenu="handleContextMenu"
   >
     <div

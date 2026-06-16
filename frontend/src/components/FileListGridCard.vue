@@ -42,6 +42,14 @@ function handleDblClick(event) {
 function handleContextMenu(event) {
   emit("contextmenu", event);
 }
+
+// Keyboard operability: Enter/Space opens the item (same as double-click).
+function handleKeydown(event) {
+  if (event.key === "Enter" || event.key === " ") {
+    event.preventDefault();
+    emit("open", event);
+  }
+}
 </script>
 
 <template>
@@ -55,14 +63,15 @@ function handleContextMenu(event) {
           : 'border-[#e0e3e7] bg-white dark:border-slate-700 dark:bg-slate-800'
     "
     :data-file-id="item.id"
+    role="button"
+    tabindex="0"
+    :aria-label="displayName"
     @click="handleClick"
     @dblclick="handleDblClick"
+    @keydown="handleKeydown"
     @contextmenu="handleContextMenu"
   >
-    <button
-      type="button"
-      class="flex w-full flex-col items-start gap-4 text-left"
-    >
+    <div class="flex w-full flex-col items-start gap-4 text-left">
       <div class="flex w-full items-start justify-between gap-3">
         <div
           class="grid size-12 place-items-center rounded-2xl transition"
@@ -122,6 +131,6 @@ function handleContextMenu(event) {
           item.is_folder ? t("drive.folder") : formatBytes(item.size)
         }}</span>
       </div>
-    </button>
+    </div>
   </div>
 </template>

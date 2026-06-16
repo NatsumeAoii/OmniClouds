@@ -13,6 +13,16 @@ export class BaseCloudAdapter {
 		};
 	}
 
+	/**
+	 * Whether this provider supports incremental change tokens (delta sync). When
+	 * false, the sync service always does a full fetchStructure walk and uses a
+	 * local diff to apply only what changed. When true, the provider implements
+	 * getDeltaChanges() and returns a token to resume from next time.
+	 */
+	supportsDeltaSync() {
+		return false;
+	}
+
 	async fetchStructure() {
 		return [];
 	}
@@ -52,6 +62,10 @@ export class BaseCloudAdapter {
 		throw new Error(`Rename is not supported for provider ${this.account.provider}`);
 	}
 
+	async moveFile() {
+		throw new Error(`Move is not supported for provider ${this.account.provider}`);
+	}
+
 	async deleteFile() {
 		throw new Error(`Delete is not supported for provider ${this.account.provider}`);
 	}
@@ -71,7 +85,20 @@ export class BaseCloudAdapter {
 	}
 
 	async getDeltaChanges() {
-		return [];
+		// Default for providers without delta support: report "changed" so the
+		// caller falls back to a full structure walk. supportsDeltaSync() is false
+		// for these providers, so this is not normally reached.
+		return { hasChanges: true, nextToken: null, expired: false };
+	}
+
+	/**
+	 * Return the current change token without enumerating changes — used right
+	 * after a full structure walk to seed the delta cursor so the next sync can
+	 * be incremental. Default null means "no token available" (provider does not
+	 * support deltas), which keeps the account on full-walk sync.
+	 */
+	async getInitialDeltaToken() {
+		return null;
 	}
 
 	async listSharedWithMe() {
@@ -84,5 +111,15 @@ export class BaseCloudAdapter {
 
 	async setFileStarred() {
 		throw new Error(`Starred state is not supported for provider ${this.account.provider}`);
+	}
+
+	/**
+	 * Best-effort revocation of this account's provider credentials (OAuth token
+	 * revoke, session logout, etc.). Default is a no-op for providers without a
+	 * revoke endpoint (S3 keys, MEGA sessions). Implementations must not throw on
+	 * provider failure — revocation is best-effort during account/teardown.
+	 */
+	async revokeAccess() {
+		return false;
 	}
 }
